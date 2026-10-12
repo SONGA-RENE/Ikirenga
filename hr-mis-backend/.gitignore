@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# System and editor files
+.DS_Store
+.vscode/
+
+# Runtime uploads containing employee data
+hr-mis-backend/uploads/*
+!hr-mis-backend/uploads/.gitkeep
+
+# Build and test output
+dist/
+build/
+coverage/
