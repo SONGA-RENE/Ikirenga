@@ -15,6 +15,8 @@ import { errorHandler } from "./middleware/errorHandler.js";
 import publicStaffCardRoutes
   from "./routes/publicStaffCardRoutes.js";
 
+  import missionRoutes from "./routes/missionRoutes.js";
+
 const app = express();
 
 const currentFilePath = fileURLToPath(import.meta.url);
@@ -55,7 +57,7 @@ app.use(
 app.use("/api/staff-cards", staffCardRoutes);
 app.use("/api/me", selfServiceRoutes);
 app.use("/api/auth", authRoutes);
-
+app.use("/api/missions", missionRoutes);
 
 
 
