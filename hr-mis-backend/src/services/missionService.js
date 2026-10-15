@@ -1267,51 +1267,7 @@ export async function decideMissionRequirement({
       error.statusCode = 400;
       throw error;
     }
-// // reject 1
-//       if (decision === "REJECTED") {
-      
-//       await client.query(
-//         `
-//           UPDATE mission_approval_requirements
-//           SET
-//             status = 'CANCELLED',
-//             completed_by_user_id = $2,
-//             completed_at = CURRENT_TIMESTAMP
-//           WHERE mission_id = $1
-//             AND id <> $3
-//             AND status = 'PENDING'
-//         `,
-//         [
-//           missionId,
-//           actionByUserId,
-//           requirementId,
-//         ],
-//       );
 
-//       missionUpdateResult = await client.query(
-//         `
-//           UPDATE missions
-//           SET
-//             status = 'REJECTED',
-//             rejection_reason = $2,
-//             rejected_at = CURRENT_TIMESTAMP,
-//             updated_at = CURRENT_TIMESTAMP
-//           WHERE id = $1
-//           RETURNING
-//             id,
-//             mission_number AS "missionNumber",
-//             status,
-//             rejection_reason
-//               AS "rejectionReason",
-//             rejected_at AS "rejectedAt",
-//             updated_at AS "updatedAt"
-//         `,
-//         [
-//           missionId,
-//           comment.trim(),
-//         ],
-//       );
-//     }
 
     const updatedRequirementResult =
       await client.query(
@@ -1889,4 +1845,985 @@ async function canUserAccessMission({
   );
 
   return result.rows[0].hasAccess;
+}
+
+export async function completeMission(
+  missionId,
+  completedByUserId,
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const missionResult = await client.query(
+      `
+        SELECT
+          id,
+          mission_number AS "missionNumber",
+          status,
+          end_date AS "endDate"
+        FROM missions
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [missionId],
+    );
+
+    const mission = missionResult.rows[0];
+
+    if (!mission) {
+      const error = new Error("Mission not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (mission.status === "COMPLETED") {
+      const error = new Error(
+        "Mission has already been completed",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (mission.status !== "APPROVED") {
+      const error = new Error(
+        "Only an approved mission can be completed",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const dateResult = await client.query(
+      `
+        SELECT $1::date > CURRENT_DATE
+          AS "missionNotEnded"
+      `,
+      [mission.endDate],
+    );
+
+    if (dateResult.rows[0].missionNotEnded) {
+      const error = new Error(
+        "Mission cannot be completed before its end date",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const updateResult = await client.query(
+      `
+        UPDATE missions
+        SET
+          status = 'COMPLETED',
+          completed_at = CURRENT_TIMESTAMP,
+          completed_by_user_id = $2,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING
+          id,
+          mission_number AS "missionNumber",
+          status,
+          start_date AS "startDate",
+          end_date AS "endDate",
+          completed_at AS "completedAt",
+          completed_by_user_id AS "completedByUserId",
+          updated_at AS "updatedAt"
+      `,
+      [missionId, completedByUserId],
+    );
+
+    await client.query("COMMIT");
+
+    return updateResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+export async function createMissionReportDraft(
+  missionId,
+  userId,
+  reportData,
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const userResult = await client.query(
+      `
+        SELECT
+          id,
+          employee_id AS "employeeId",
+          is_active AS "isActive"
+        FROM app_users
+        WHERE id = $1
+      `,
+      [userId],
+    );
+
+    const user = userResult.rows[0];
+
+    if (!user || !user.isActive) {
+      const error = new Error(
+        "Active user account not found",
+      );
+      error.statusCode = 403;
+      throw error;
+    }
+
+    if (!user.employeeId) {
+      const error = new Error(
+        "Your user account is not linked to an employee",
+      );
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const missionResult = await client.query(
+      `
+        SELECT
+          id,
+          mission_number AS "missionNumber",
+          status
+        FROM missions
+        WHERE id = $1
+      `,
+      [missionId],
+    );
+
+    const mission = missionResult.rows[0];
+
+    if (!mission) {
+      const error = new Error("Mission not found");
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (mission.status !== "COMPLETED") {
+      const error = new Error(
+        "A report can only be created for a completed mission",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const participantResult = await client.query(
+      `
+        SELECT id
+        FROM mission_participants
+        WHERE mission_id = $1
+          AND employee_id = $2
+      `,
+      [missionId, user.employeeId],
+    );
+
+    if (participantResult.rowCount === 0) {
+      const error = new Error(
+        "You cannot report on a mission you did not participate in",
+      );
+      error.statusCode = 403;
+      throw error;
+    }
+
+    const existingReportResult =
+      await client.query(
+        `
+          SELECT id, status
+          FROM mission_reports
+          WHERE mission_id = $1
+            AND submitted_by_employee_id = $2
+        `,
+        [missionId, user.employeeId],
+      );
+
+    if (existingReportResult.rowCount > 0) {
+      const error = new Error(
+        "You already have a report for this mission",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const cleanOptionalText = (value) => {
+      if (typeof value !== "string") {
+        return null;
+      }
+
+      const cleanedValue = value.trim();
+
+      return cleanedValue || null;
+    };
+
+    const reportResult = await client.query(
+      `
+        INSERT INTO mission_reports (
+          mission_id,
+          submitted_by_employee_id,
+          activities,
+          outcomes,
+          challenges,
+          recommendations,
+          conclusion,
+          follow_up_actions,
+          status
+        )
+        VALUES (
+          $1, $2, $3, $4, $5,
+          $6, $7, $8, 'DRAFT'
+        )
+        RETURNING
+          id,
+          mission_id AS "missionId",
+          submitted_by_employee_id
+            AS "submittedByEmployeeId",
+          activities,
+          outcomes,
+          challenges,
+          recommendations,
+          conclusion,
+          follow_up_actions AS "followUpActions",
+          status,
+          submitted_at AS "submittedAt",
+          created_at AS "createdAt",
+          updated_at AS "updatedAt"
+      `,
+      [
+        missionId,
+        user.employeeId,
+        cleanOptionalText(reportData.activities),
+        cleanOptionalText(reportData.outcomes),
+        cleanOptionalText(reportData.challenges),
+        cleanOptionalText(
+          reportData.recommendations,
+        ),
+        cleanOptionalText(reportData.conclusion),
+        cleanOptionalText(
+          reportData.followUpActions,
+        ),
+      ],
+    );
+
+    await client.query("COMMIT");
+
+    return reportResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    if (error.code === "23505") {
+      const conflictError = new Error(
+        "You already have a report for this mission",
+      );
+      conflictError.statusCode = 409;
+      throw conflictError;
+    }
+
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+export async function updateMissionReportDraft(
+  missionId,
+  userId,
+  reportData,
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const reportResult = await client.query(
+      `
+        SELECT
+          mission_reports.id,
+          mission_reports.status
+        FROM mission_reports
+
+        JOIN app_users
+          ON app_users.employee_id =
+            mission_reports.submitted_by_employee_id
+
+        WHERE mission_reports.mission_id = $1
+          AND app_users.id = $2
+
+        FOR UPDATE OF mission_reports
+      `,
+      [missionId, userId],
+    );
+
+    const report = reportResult.rows[0];
+
+    if (!report) {
+      const error = new Error(
+        "Mission report draft not found",
+      );
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (report.status !== "DRAFT") {
+      const error = new Error(
+        "A submitted mission report cannot be edited",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const fieldMap = {
+      activities: "activities",
+      outcomes: "outcomes",
+      challenges: "challenges",
+      recommendations: "recommendations",
+      conclusion: "conclusion",
+      followUpActions: "follow_up_actions",
+    };
+
+    const assignments = [];
+    const values = [report.id];
+
+    for (const [requestField, databaseColumn]
+      of Object.entries(fieldMap)) {
+      if (
+        Object.hasOwn(
+          reportData,
+          requestField,
+        )
+      ) {
+        const value =
+          typeof reportData[requestField] ===
+          "string"
+            ? reportData[requestField].trim() ||
+              null
+            : null;
+
+        values.push(value);
+
+        assignments.push(
+          `${databaseColumn} = $${values.length}`,
+        );
+      }
+    }
+
+    if (assignments.length === 0) {
+      const error = new Error(
+        "Provide at least one report field to update",
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const updatedReportResult =
+      await client.query(
+        `
+          UPDATE mission_reports
+          SET
+            ${assignments.join(", ")},
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+          RETURNING
+            id,
+            mission_id AS "missionId",
+            submitted_by_employee_id
+              AS "submittedByEmployeeId",
+            activities,
+            outcomes,
+            challenges,
+            recommendations,
+            conclusion,
+            follow_up_actions
+              AS "followUpActions",
+            status,
+            submitted_at AS "submittedAt",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+        `,
+        values,
+      );
+
+    await client.query("COMMIT");
+
+    return updatedReportResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+export async function submitMissionReport(
+  missionId,
+  userId,
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const reportResult = await client.query(
+      `
+        SELECT
+          mission_reports.id,
+          mission_reports.activities,
+          mission_reports.outcomes,
+          mission_reports.status,
+          missions.status AS "missionStatus"
+
+        FROM mission_reports
+
+        JOIN app_users
+          ON app_users.employee_id =
+            mission_reports.submitted_by_employee_id
+
+        JOIN missions
+          ON missions.id =
+            mission_reports.mission_id
+
+        WHERE mission_reports.mission_id = $1
+          AND app_users.id = $2
+
+        FOR UPDATE OF mission_reports
+      `,
+      [missionId, userId],
+    );
+
+    const report = reportResult.rows[0];
+
+    if (!report) {
+      const error = new Error(
+        "Mission report draft not found",
+      );
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (report.status === "SUBMITTED") {
+      const error = new Error(
+        "Mission report has already been submitted",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (report.missionStatus !== "COMPLETED") {
+      const error = new Error(
+        "Reports can only be submitted for completed missions",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (
+      !report.activities?.trim() ||
+      !report.outcomes?.trim()
+    ) {
+      const error = new Error(
+        "Activities and outcomes are required before submission",
+      );
+      error.statusCode = 400;
+      throw error;
+    }
+
+    const submittedReportResult =
+      await client.query(
+        `
+          UPDATE mission_reports
+          SET
+            activities = TRIM(activities),
+            outcomes = TRIM(outcomes),
+            status = 'SUBMITTED',
+            submitted_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+          RETURNING
+            id,
+            mission_id AS "missionId",
+            submitted_by_employee_id
+              AS "submittedByEmployeeId",
+            activities,
+            outcomes,
+            challenges,
+            recommendations,
+            conclusion,
+            follow_up_actions
+              AS "followUpActions",
+            status,
+            submitted_at AS "submittedAt",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt"
+        `,
+        [report.id],
+      );
+
+    await client.query("COMMIT");
+
+    return submittedReportResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+export async function findMyMissionReport(
+  missionId,
+  userId,
+) {
+  const result = await pool.query(
+    `
+      SELECT
+        mission_reports.id,
+        mission_reports.mission_id
+          AS "missionId",
+
+        missions.mission_number
+          AS "missionNumber",
+        missions.title AS "missionTitle",
+        missions.destination,
+        missions.start_date AS "startDate",
+        missions.end_date AS "endDate",
+
+        mission_reports.submitted_by_employee_id
+          AS "submittedByEmployeeId",
+
+        CONCAT(
+          employees.first_name,
+          ' ',
+          employees.last_name
+        ) AS "submittedBy",
+
+        mission_reports.activities,
+        mission_reports.outcomes,
+        mission_reports.challenges,
+        mission_reports.recommendations,
+        mission_reports.conclusion,
+
+        mission_reports.follow_up_actions
+          AS "followUpActions",
+
+        mission_reports.status,
+        mission_reports.submitted_at
+          AS "submittedAt",
+        mission_reports.created_at
+          AS "createdAt",
+        mission_reports.updated_at
+          AS "updatedAt"
+
+      FROM mission_reports
+
+      JOIN missions
+        ON missions.id =
+          mission_reports.mission_id
+
+      JOIN employees
+        ON employees.id =
+          mission_reports.submitted_by_employee_id
+
+      JOIN app_users
+        ON app_users.employee_id =
+          mission_reports.submitted_by_employee_id
+
+      WHERE mission_reports.mission_id = $1
+        AND app_users.id = $2
+    `,
+    [missionId, userId],
+  );
+
+  return result.rows[0] || null;
+}
+export async function findMissionReportTracking(
+  missionId,
+) {
+  const missionResult = await pool.query(
+    `
+      SELECT
+        id,
+        mission_number AS "missionNumber",
+        title,
+        status,
+        start_date AS "startDate",
+        end_date AS "endDate"
+      FROM missions
+      WHERE id = $1
+    `,
+    [missionId],
+  );
+
+  const mission = missionResult.rows[0];
+
+  if (!mission) {
+    return null;
+  }
+
+  const participantResult = await pool.query(
+    `
+      SELECT
+        mission_participants.employee_id
+          AS "employeeId",
+
+        employees.staff_number
+          AS "staffNumber",
+
+        CONCAT(
+          employees.first_name,
+          ' ',
+          employees.last_name
+        ) AS "fullName",
+
+        positions.title AS "position",
+        departments.name AS "department",
+
+        mission_reports.id AS "reportId",
+
+        COALESCE(
+          mission_reports.status,
+          'NOT_STARTED'
+        ) AS "reportStatus",
+
+        mission_reports.submitted_at
+          AS "submittedAt",
+
+        mission_reports.created_at
+          AS "reportCreatedAt",
+
+        mission_reports.updated_at
+          AS "reportUpdatedAt"
+
+      FROM mission_participants
+
+      JOIN employees
+        ON employees.id =
+          mission_participants.employee_id
+
+      LEFT JOIN positions
+        ON positions.id =
+          employees.position_id
+
+      LEFT JOIN departments
+        ON departments.id =
+          mission_participants.department_id
+
+      LEFT JOIN mission_reports
+        ON mission_reports.mission_id =
+          mission_participants.mission_id
+        AND mission_reports.submitted_by_employee_id =
+          mission_participants.employee_id
+
+      WHERE mission_participants.mission_id = $1
+
+      ORDER BY
+        employees.first_name,
+        employees.last_name
+    `,
+    [missionId],
+  );
+
+  const participants = participantResult.rows;
+
+  const summary = {
+    totalParticipants: participants.length,
+
+    submittedReports: participants.filter(
+      (participant) =>
+        participant.reportStatus ===
+        "SUBMITTED",
+    ).length,
+
+    draftReports: participants.filter(
+      (participant) =>
+        participant.reportStatus === "DRAFT",
+    ).length,
+
+    missingReports: participants.filter(
+      (participant) =>
+        participant.reportStatus ===
+        "NOT_STARTED",
+    ).length,
+  };
+
+  return {
+    ...mission,
+    reportSummary: summary,
+    participants,
+  };
+}
+export async function findMissionReportById(
+  missionId,
+  reportId,
+) {
+  const result = await pool.query(
+    `
+      SELECT
+        mission_reports.id,
+        mission_reports.mission_id
+          AS "missionId",
+
+        missions.mission_number
+          AS "missionNumber",
+        missions.title AS "missionTitle",
+        missions.destination,
+        missions.start_date AS "startDate",
+        missions.end_date AS "endDate",
+
+        mission_reports.submitted_by_employee_id
+          AS "submittedByEmployeeId",
+
+        employees.staff_number AS "staffNumber",
+
+        CONCAT(
+          employees.first_name,
+          ' ',
+          employees.last_name
+        ) AS "submittedBy",
+
+        positions.title AS "position",
+        departments.name AS "department",
+
+        mission_reports.activities,
+        mission_reports.outcomes,
+        mission_reports.challenges,
+        mission_reports.recommendations,
+        mission_reports.conclusion,
+
+        mission_reports.follow_up_actions
+          AS "followUpActions",
+
+        mission_reports.status,
+        mission_reports.submitted_at
+          AS "submittedAt",
+        mission_reports.created_at
+          AS "createdAt",
+        mission_reports.updated_at
+          AS "updatedAt"
+
+      FROM mission_reports
+
+      JOIN missions
+        ON missions.id =
+          mission_reports.mission_id
+
+      JOIN employees
+        ON employees.id =
+          mission_reports.submitted_by_employee_id
+
+      LEFT JOIN positions
+        ON positions.id =
+          employees.position_id
+
+      LEFT JOIN departments
+        ON departments.id =
+          positions.department_id
+
+      WHERE mission_reports.id = $1
+        AND mission_reports.mission_id = $2
+    `,
+    [reportId, missionId],
+  );
+
+  return result.rows[0] || null;
+}
+export async function saveMissionReportDocument(
+  missionId,
+  userId,
+  documentType,
+  file,
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const reportResult = await client.query(
+      `
+        SELECT
+          mission_reports.id,
+          mission_reports.status,
+          mission_reports.submitted_by_employee_id
+            AS "employeeId",
+          missions.status AS "missionStatus"
+
+        FROM mission_reports
+
+        JOIN missions
+          ON missions.id =
+            mission_reports.mission_id
+
+        JOIN app_users
+          ON app_users.employee_id =
+            mission_reports.submitted_by_employee_id
+
+        WHERE mission_reports.mission_id = $1
+          AND app_users.id = $2
+
+        FOR UPDATE OF mission_reports
+      `,
+      [missionId, userId],
+    );
+
+    const report = reportResult.rows[0];
+
+    if (!report) {
+      const error = new Error(
+        "Mission report draft not found for the current user",
+      );
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (report.missionStatus !== "COMPLETED") {
+      const error = new Error(
+        "Documents can only be attached to completed missions",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    if (report.status !== "DRAFT") {
+      const error = new Error(
+        "Documents cannot be added after report submission",
+      );
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const documentResult = await client.query(
+      `
+        INSERT INTO mission_documents (
+          mission_id,
+          report_id,
+          document_type,
+          original_filename,
+          stored_filename,
+          mime_type,
+          file_size,
+          uploaded_by_user_id
+        )
+        VALUES (
+          $1, $2, $3, $4,
+          $5, $6, $7, $8
+        )
+        RETURNING
+          id,
+          mission_id AS "missionId",
+          report_id AS "reportId",
+          document_type AS "documentType",
+          original_filename
+            AS "originalFilename",
+          stored_filename AS "storedFilename",
+          mime_type AS "mimeType",
+          file_size AS "fileSize",
+          uploaded_by_user_id
+            AS "uploadedByUserId",
+          created_at AS "createdAt"
+      `,
+      [
+        missionId,
+        report.id,
+        documentType,
+        file.originalname,
+        file.filename,
+        file.mimetype,
+        file.size,
+        userId,
+      ],
+    );
+
+    await client.query("COMMIT");
+
+    return documentResult.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+export async function findMyMissionReportDocuments(
+  missionId,
+  userId,
+) {
+  const result = await pool.query(
+    `
+      SELECT
+        mission_documents.id,
+        mission_documents.mission_id
+          AS "missionId",
+        mission_documents.report_id
+          AS "reportId",
+        mission_documents.document_type
+          AS "documentType",
+        mission_documents.original_filename
+          AS "originalFilename",
+        mission_documents.mime_type
+          AS "mimeType",
+        mission_documents.file_size
+          AS "fileSize",
+        mission_documents.created_at
+          AS "createdAt"
+
+      FROM mission_documents
+
+      JOIN mission_reports
+        ON mission_reports.id =
+          mission_documents.report_id
+
+      JOIN app_users
+        ON app_users.employee_id =
+          mission_reports.submitted_by_employee_id
+
+      WHERE mission_documents.mission_id = $1
+        AND app_users.id = $2
+
+      ORDER BY mission_documents.created_at
+    `,
+    [missionId, userId],
+  );
+
+  return result.rows;
+}
+
+export async function findAccessibleMissionDocument(
+  documentId,
+  userId,
+  userRole,
+) {
+  const result = await pool.query(
+    `
+      SELECT
+        mission_documents.id,
+        mission_documents.mission_id
+          AS "missionId",
+        mission_documents.report_id
+          AS "reportId",
+        mission_documents.original_filename
+          AS "originalFilename",
+        mission_documents.stored_filename
+          AS "storedFilename",
+        mission_documents.mime_type
+          AS "mimeType",
+
+        report_owner.id AS "ownerUserId"
+
+      FROM mission_documents
+
+      JOIN mission_reports
+        ON mission_reports.id =
+          mission_documents.report_id
+
+      LEFT JOIN app_users AS report_owner
+        ON report_owner.employee_id =
+          mission_reports.submitted_by_employee_id
+
+      WHERE mission_documents.id = $1
+        AND (
+          $2::text IN ('ADMIN', 'HR')
+          OR report_owner.id = $3
+        )
+    `,
+    [documentId, userRole, userId],
+  );
+
+  return result.rows[0] || null;
 }
