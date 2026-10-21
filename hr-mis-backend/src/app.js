@@ -12,17 +12,34 @@ import authRoutes from "./routes/authRoutes.js";
 import selfServiceRoutes from "./routes/selfServiceRoutes.js";
 import staffCardRoutes from "./routes/staffCardRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
-import publicStaffCardRoutes
-  from "./routes/publicStaffCardRoutes.js";
-
-  import missionRoutes from "./routes/missionRoutes.js";
+import publicStaffCardRoutes from "./routes/publicStaffCardRoutes.js";
+import missionRoutes from "./routes/missionRoutes.js";
 
 const app = express();
+import cors from "cors";
 
 const currentFilePath = fileURLToPath(import.meta.url);
 const currentDirectory = path.dirname(currentFilePath);
 
 // Parse JSON request bodies
+app.use(
+  cors({
+    origin: "http://localhost:5173",
+    methods: [
+      "GET",
+      "POST",
+      "PATCH",
+      "PUT",
+      "DELETE",
+      "OPTIONS",
+    ],
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+    ],
+  }),
+);
+
 app.use(express.json());
 
 // Serve public assets such as the logo and signature
@@ -58,8 +75,6 @@ app.use("/api/staff-cards", staffCardRoutes);
 app.use("/api/me", selfServiceRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/missions", missionRoutes);
-
-
 
 // Handle unknown endpoints
 app.use((request, response) => {
