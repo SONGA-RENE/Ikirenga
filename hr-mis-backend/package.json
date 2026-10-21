@@ -5,8 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "node --watch --env-file=.env server.js",
-    "start": "node --env-file=.env server.js"
+     "dev": "node --watch --env-file=.env server.js",
+  "start": "node --env-file=.env server.js",
+  "migrate": "node --env-file=.env scripts/migrate.js",
+  "migrate:mark-baseline": "node --env-file=.env scripts/migrate.js --mark-existing 001_baseline_schema.sql"
   },
   "keywords": [],
   "author": "",

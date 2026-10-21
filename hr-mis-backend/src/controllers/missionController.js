@@ -17,6 +17,15 @@ import {
   saveMissionReportDocument,
   findMyMissionReportDocuments,
   findAccessibleMissionDocument,
+  deleteMyMissionReportDocument,
+  findMyMissionHistory,
+  findMissionDashboardSummary,
+  findOutstandingMissionReports,
+  findMissionRegister,
+  saveReconciliationReceipt,
+  findReconciliationReceipts,
+  findAccessibleReconciliationReceipt,
+  deleteMyReconciliationReceipt,
 } from "../services/missionService.js";
 
 
@@ -813,6 +822,838 @@ export async function downloadMissionDocument(
       filePath,
       document.originalFilename,
     );
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteMyMissionDocument(
+  request,
+  response,
+  next,
+) {
+  try {
+    const missionId = Number(
+      request.params.missionId,
+    );
+
+    const documentId = Number(
+      request.params.documentId,
+    );
+
+    if (
+      !Number.isInteger(missionId) ||
+      missionId <= 0 ||
+      !Number.isInteger(documentId) ||
+      documentId <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Mission ID and document ID must be positive integers",
+      });
+    }
+
+    const document =
+      await deleteMyMissionReportDocument(
+        missionId,
+        documentId,
+        request.user.id,
+      );
+
+    const safeStoredFilename = path.basename(
+      document.storedFilename,
+    );
+
+    const filePath = path.resolve(
+      "private-uploads",
+      "mission-documents",
+      safeStoredFilename,
+    );
+
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        // The database record is already removed.
+        // Log the orphaned file for later cleanup.
+        console.error(
+          "Failed to remove mission document file:",
+          error,
+        );
+      }
+    }
+
+    return response.status(200).json({
+      success: true,
+      message:
+        "Mission report document deleted successfully",
+      data: {
+        id: document.id,
+        documentType:
+          document.documentType,
+        originalFilename:
+          document.originalFilename,
+      },
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function getMyMissionHistory(
+  request,
+  response,
+  next,
+) {
+  try {
+    const page = Number(
+      request.query.page || 1,
+    );
+
+    const limit = Number(
+      request.query.limit || 10,
+    );
+
+    if (
+      !Number.isInteger(page) ||
+      page <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Page must be a positive integer",
+      });
+    }
+
+    if (
+      !Number.isInteger(limit) ||
+      limit <= 0 ||
+      limit > 100
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Limit must be between 1 and 100",
+      });
+    }
+
+    const history =
+      await findMyMissionHistory(
+        request.user.id,
+        page,
+        limit,
+      );
+
+    return response.status(200).json({
+      success: true,
+      count: history.missions.length,
+      pagination: history.pagination,
+      data: history.missions,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function getMissionDashboardSummary(
+  request,
+  response,
+  next,
+) {
+  try {
+    const {
+      dateFrom,
+      dateTo,
+      departmentId: departmentIdValue,
+    } = request.query;
+
+    const datePattern =
+      /^\d{4}-\d{2}-\d{2}$/;
+
+    if (
+      dateFrom &&
+      !datePattern.test(dateFrom)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateFrom must use YYYY-MM-DD format",
+      });
+    }
+
+    if (
+      dateTo &&
+      !datePattern.test(dateTo)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateTo must use YYYY-MM-DD format",
+      });
+    }
+
+    if (
+      dateFrom &&
+      dateTo &&
+      dateFrom > dateTo
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateFrom cannot be later than dateTo",
+      });
+    }
+
+    let departmentId = null;
+
+    if (departmentIdValue !== undefined) {
+      departmentId = Number(
+        departmentIdValue,
+      );
+
+      if (
+        !Number.isInteger(departmentId) ||
+        departmentId <= 0
+      ) {
+        return response.status(400).json({
+          success: false,
+          message:
+            "Department ID must be a positive integer",
+        });
+      }
+    }
+
+    const summary =
+      await findMissionDashboardSummary({
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        departmentId,
+      });
+
+    return response.status(200).json({
+      success: true,
+      data: summary,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function getOutstandingMissionReports(
+  request,
+  response,
+  next,
+) {
+  try {
+    const {
+      dateFrom,
+      dateTo,
+      departmentId: departmentIdValue,
+      reportStatus,
+    } = request.query;
+
+    const page = Number(
+      request.query.page || 1,
+    );
+
+    const limit = Number(
+      request.query.limit || 10,
+    );
+
+    const datePattern =
+      /^\d{4}-\d{2}-\d{2}$/;
+
+    if (
+      dateFrom &&
+      !datePattern.test(dateFrom)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateFrom must use YYYY-MM-DD format",
+      });
+    }
+
+    if (
+      dateTo &&
+      !datePattern.test(dateTo)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateTo must use YYYY-MM-DD format",
+      });
+    }
+
+    if (
+      dateFrom &&
+      dateTo &&
+      dateFrom > dateTo
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateFrom cannot be later than dateTo",
+      });
+    }
+
+    let departmentId = null;
+
+    if (departmentIdValue !== undefined) {
+      departmentId = Number(
+        departmentIdValue,
+      );
+
+      if (
+        !Number.isInteger(departmentId) ||
+        departmentId <= 0
+      ) {
+        return response.status(400).json({
+          success: false,
+          message:
+            "Department ID must be a positive integer",
+        });
+      }
+    }
+
+    const allowedReportStatuses = [
+      "DRAFT",
+      "NOT_STARTED",
+    ];
+
+    if (
+      reportStatus &&
+      !allowedReportStatuses.includes(
+        reportStatus,
+      )
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "reportStatus must be DRAFT or NOT_STARTED",
+      });
+    }
+
+    if (
+      !Number.isInteger(page) ||
+      page <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Page must be a positive integer",
+      });
+    }
+
+    if (
+      !Number.isInteger(limit) ||
+      limit <= 0 ||
+      limit > 100
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Limit must be between 1 and 100",
+      });
+    }
+
+    const result =
+      await findOutstandingMissionReports({
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        departmentId,
+        reportStatus:
+          reportStatus || null,
+        page,
+        limit,
+      });
+
+    return response.status(200).json({
+      success: true,
+      count:
+        result.outstandingReports.length,
+      pagination: result.pagination,
+      data: result.outstandingReports,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function getMissionRegister(
+  request,
+  response,
+  next,
+) {
+  try {
+    const {
+      status,
+      missionType,
+      departmentId: departmentIdValue,
+      employeeId: employeeIdValue,
+      destination,
+      dateFrom,
+      dateTo,
+      search,
+    } = request.query;
+
+    const page = Number(
+      request.query.page || 1,
+    );
+
+    const limit = Number(
+      request.query.limit || 10,
+    );
+
+    const allowedStatuses = [
+      "DRAFT",
+      "SUBMITTED",
+      "DEPARTMENT_VERIFIED",
+      "HR_VERIFIED",
+      "APPROVED",
+      "REJECTED",
+      "CANCELLED",
+      "COMPLETED",
+    ];
+
+    if (
+      status &&
+      !allowedStatuses.includes(status)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message: "Invalid mission status",
+      });
+    }
+
+    const allowedMissionTypes = [
+      "LOCAL",
+      "INTERNATIONAL",
+    ];
+
+    if (
+      missionType &&
+      !allowedMissionTypes.includes(
+        missionType,
+      )
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Mission type must be LOCAL or INTERNATIONAL",
+      });
+    }
+
+    const parseOptionalId = (
+      value,
+      fieldName,
+    ) => {
+      if (value === undefined) {
+        return null;
+      }
+
+      const parsedValue = Number(value);
+
+      if (
+        !Number.isInteger(parsedValue) ||
+        parsedValue <= 0
+      ) {
+        const error = new Error(
+          `${fieldName} must be a positive integer`,
+        );
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return parsedValue;
+    };
+
+    const departmentId = parseOptionalId(
+      departmentIdValue,
+      "Department ID",
+    );
+
+    const employeeId = parseOptionalId(
+      employeeIdValue,
+      "Employee ID",
+    );
+
+    const datePattern =
+      /^\d{4}-\d{2}-\d{2}$/;
+
+    if (
+      dateFrom &&
+      !datePattern.test(dateFrom)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateFrom must use YYYY-MM-DD format",
+      });
+    }
+
+    if (
+      dateTo &&
+      !datePattern.test(dateTo)
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateTo must use YYYY-MM-DD format",
+      });
+    }
+
+    if (
+      dateFrom &&
+      dateTo &&
+      dateFrom > dateTo
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "dateFrom cannot be later than dateTo",
+      });
+    }
+
+    if (
+      !Number.isInteger(page) ||
+      page <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Page must be a positive integer",
+      });
+    }
+
+    if (
+      !Number.isInteger(limit) ||
+      limit <= 0 ||
+      limit > 100
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Limit must be between 1 and 100",
+      });
+    }
+
+    const result =
+      await findMissionRegister({
+        status: status || null,
+        missionType:
+          missionType || null,
+        departmentId,
+        employeeId,
+        destination:
+          destination?.trim() || null,
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        search: search?.trim() || null,
+        page,
+        limit,
+      });
+
+    return response.status(200).json({
+      success: true,
+      filters: {
+        status: status || null,
+        missionType:
+          missionType || null,
+        departmentId,
+        employeeId,
+        destination:
+          destination?.trim() || null,
+        dateFrom: dateFrom || null,
+        dateTo: dateTo || null,
+        search: search?.trim() || null,
+      },
+      count: result.missions.length,
+      pagination: result.pagination,
+      data: result.missions,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function uploadMyReconciliationReceipt(
+  request,
+  response,
+  next,
+) {
+  try {
+    const missionId = Number(
+      request.params.missionId,
+    );
+
+    const reconciliationId = Number(
+      request.params.reconciliationId,
+    );
+
+    const itemId = Number(
+      request.params.itemId,
+    );
+
+    if (
+      !Number.isInteger(missionId) ||
+      missionId <= 0 ||
+      !Number.isInteger(reconciliationId) ||
+      reconciliationId <= 0 ||
+      !Number.isInteger(itemId) ||
+      itemId <= 0
+    ) {
+      await removeUploadedFile(request.file);
+
+      return response.status(400).json({
+        success: false,
+        message:
+          "Mission, reconciliation and item IDs must be positive integers",
+      });
+    }
+
+    if (!request.file) {
+      return response.status(400).json({
+        success: false,
+        message: "Select a receipt to upload",
+      });
+    }
+
+    const document =
+      await saveReconciliationReceipt(
+        missionId,
+        reconciliationId,
+        itemId,
+        request.user.id,
+        request.file,
+      );
+
+    return response.status(201).json({
+      success: true,
+      message:
+        "Reconciliation receipt uploaded successfully",
+      data: document,
+    });
+  } catch (error) {
+    await removeUploadedFile(request.file);
+    next(error);
+  }
+}
+
+export async function getReconciliationReceipts(
+  request,
+  response,
+  next,
+) {
+  try {
+    const missionId = Number(
+      request.params.missionId,
+    );
+
+    const reconciliationId = Number(
+      request.params.reconciliationId,
+    );
+
+    const itemId = Number(
+      request.params.itemId,
+    );
+
+    if (
+      !Number.isInteger(missionId) ||
+      missionId <= 0 ||
+      !Number.isInteger(reconciliationId) ||
+      reconciliationId <= 0 ||
+      !Number.isInteger(itemId) ||
+      itemId <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Mission, reconciliation and item IDs must be positive integers",
+      });
+    }
+
+    const documents =
+      await findReconciliationReceipts({
+        missionId,
+        reconciliationId,
+        itemId,
+        userId: request.user.id,
+        userRole: request.user.role,
+      });
+
+    if (documents === null) {
+      return response.status(404).json({
+        success: false,
+        message:
+          "Reconciliation expense item not found",
+      });
+    }
+
+    return response.status(200).json({
+      success: true,
+      count: documents.length,
+      data: documents,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function downloadReconciliationReceipt(
+  request,
+  response,
+  next,
+) {
+  try {
+    const missionId = Number(
+      request.params.missionId,
+    );
+
+    const documentId = Number(
+      request.params.documentId,
+    );
+
+    if (
+      !Number.isInteger(missionId) ||
+      missionId <= 0 ||
+      !Number.isInteger(documentId) ||
+      documentId <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Mission ID and document ID must be positive integers",
+      });
+    }
+
+    const document =
+      await findAccessibleReconciliationReceipt({
+        missionId,
+        documentId,
+        userId: request.user.id,
+        userRole: request.user.role,
+      });
+
+    if (!document) {
+      return response.status(404).json({
+        success: false,
+        message:
+          "Receipt not found or access denied",
+      });
+    }
+
+    const safeStoredFilename = path.basename(
+      document.storedFilename,
+    );
+
+    const filePath = path.resolve(
+      "private-uploads",
+      "mission-documents",
+      safeStoredFilename,
+    );
+
+    try {
+      await fs.access(filePath);
+    } catch {
+      return response.status(404).json({
+        success: false,
+        message:
+          "The receipt record exists, but the file is missing",
+      });
+    }
+
+    response.type(
+      document.mimeType ||
+        "application/octet-stream",
+    );
+
+    return response.download(
+      filePath,
+      document.originalFilename,
+    );
+  } catch (error) {
+    next(error);
+  }
+}
+
+export async function deleteReconciliationReceipt(
+  request,
+  response,
+  next,
+) {
+  try {
+    const missionId = Number(
+      request.params.missionId,
+    );
+
+    const reconciliationId = Number(
+      request.params.reconciliationId,
+    );
+
+    const itemId = Number(
+      request.params.itemId,
+    );
+
+    const documentId = Number(
+      request.params.documentId,
+    );
+
+    if (
+      !Number.isInteger(missionId) ||
+      missionId <= 0 ||
+      !Number.isInteger(reconciliationId) ||
+      reconciliationId <= 0 ||
+      !Number.isInteger(itemId) ||
+      itemId <= 0 ||
+      !Number.isInteger(documentId) ||
+      documentId <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "All identifiers must be positive integers",
+      });
+    }
+
+    const document =
+      await deleteMyReconciliationReceipt({
+        missionId,
+        reconciliationId,
+        itemId,
+        documentId,
+        userId: request.user.id,
+      });
+
+    const safeStoredFilename = path.basename(
+      document.storedFilename,
+    );
+
+    const filePath = path.resolve(
+      "private-uploads",
+      "mission-documents",
+      safeStoredFilename,
+    );
+
+    try {
+      await fs.unlink(filePath);
+    } catch (error) {
+      if (error.code !== "ENOENT") {
+        console.error(
+          "Failed to remove receipt file:",
+          error,
+        );
+      }
+    }
+
+    return response.status(200).json({
+      success: true,
+      message:
+        "Reconciliation receipt deleted successfully",
+      data: {
+        id: document.id,
+        documentType:
+          document.documentType,
+        originalFilename:
+          document.originalFilename,
+      },
+    });
   } catch (error) {
     next(error);
   }
