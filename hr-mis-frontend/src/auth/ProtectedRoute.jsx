@@ -6,21 +6,21 @@ import {
 
 import { useAuth } from "./AuthContext.jsx";
 
-function ProtectedRoute({ allowedRoles }) {
-  const location = useLocation();
-
+function ProtectedRoute() {
   const {
-    user,
-    isLoading,
     isAuthenticated,
+    isLoading,
   } = useAuth();
+
+  const location = useLocation();
 
   if (isLoading) {
     return (
-      <main className="loading-page">
+      <div className="loading-page">
         <div className="loading-spinner" />
+
         <p>Loading Ikirenga...</p>
-      </main>
+      </div>
     );
   }
 
@@ -30,18 +30,6 @@ function ProtectedRoute({ allowedRoles }) {
         to="/login"
         replace
         state={{ from: location }}
-      />
-    );
-  }
-
-  if (
-    allowedRoles?.length &&
-    !allowedRoles.includes(user.role)
-  ) {
-    return (
-      <Navigate
-        to="/dashboard"
-        replace
       />
     );
   }

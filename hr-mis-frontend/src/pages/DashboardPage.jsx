@@ -3,9 +3,10 @@ import {
   CalendarDays,
   CreditCard,
   FileText,
-  LogOut,
   Users,
 } from "lucide-react";
+
+import { Link } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext.jsx";
 
@@ -15,140 +16,117 @@ const modules = [
     description:
       "Manage employee records and organizational information.",
     icon: Users,
+    path: "/employees",
+    enabled: true,
   },
   {
     title: "Contracts",
     description:
       "Monitor employment contracts and expiry dates.",
     icon: FileText,
+    enabled: false,
   },
   {
     title: "Leave",
     description:
       "Manage leave requests, balances and approvals.",
     icon: CalendarDays,
+    enabled: false,
   },
   {
     title: "Missions",
     description:
       "Manage missions, approvals, reports and reconciliation.",
     icon: BriefcaseBusiness,
+    enabled: false,
   },
   {
     title: "Staff Cards",
     description:
       "Issue, verify, revoke and replace staff cards.",
     icon: CreditCard,
+    enabled: false,
   },
 ];
 
 function DashboardPage() {
-  const { user, logout } = useAuth();
+  const { user } = useAuth();
+
+  const userInitials = user.fullName
+    .split(" ")
+    .filter(Boolean)
+    .map((name) => name[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 
   return (
-    <div className="dashboard-shell">
-      <aside className="sidebar">
+    <>
+      <header className="dashboard-header">
         <div>
-          <div className="sidebar-brand">
-            <div className="brand-mark small">
-              IK
-            </div>
+          <p className="eyebrow">
+            Ikirenga overview
+          </p>
 
-            <div>
-              <strong>Ikirenga</strong>
-              <span>HR MIS</span>
-            </div>
-          </div>
+          <h1>
+            Welcome, {user.fullName}
+          </h1>
 
-          <nav className="sidebar-navigation">
-            <a
-              className="navigation-link active"
-              href="/dashboard"
-            >
-              Dashboard
-            </a>
-
-            {modules.map((module) => (
-              <button
-                key={module.title}
-                className="navigation-link"
-                type="button"
-              >
-                {module.title}
-              </button>
-            ))}
-          </nav>
+          <p>
+            Manage PSF human resources
+            operations from one place.
+          </p>
         </div>
 
-        <button
-          className="logout-button"
-          type="button"
-          onClick={logout}
-        >
-          <LogOut size={18} />
-          Sign out
-        </button>
-      </aside>
+        <div className="user-summary">
+          <div className="user-avatar">
+            {userInitials}
+          </div>
 
-      <main className="dashboard-content">
-        <header className="dashboard-header">
           <div>
-            <p className="eyebrow">
-              IKIRENGA OVERVIEW
-            </p>
-
-            <h1>
-              Welcome, {user.fullName}
-            </h1>
-
-            <p>
-              Manage PSF human resources
-              operations from one place.
-            </p>
+            <strong>{user.fullName}</strong>
+            <span>{user.role}</span>
           </div>
+        </div>
+      </header>
 
-          <div className="user-summary">
-            <div className="user-avatar">
-              {user.fullName
-                .split(" ")
-                .map((name) => name[0])
-                .slice(0, 2)
-                .join("")
-                .toUpperCase()}
-            </div>
+      <section
+        className="module-grid"
+        aria-label="HR modules"
+      >
+        {modules.map((module) => {
+          const Icon = module.icon;
 
-            <div>
-              <strong>{user.fullName}</strong>
-              <span>{user.role}</span>
-            </div>
-          </div>
-        </header>
+          return (
+            <article
+              className="module-card"
+              key={module.title}
+            >
+              <div className="module-icon">
+                <Icon size={24} />
+              </div>
 
-        <section className="module-grid">
-          {modules.map((module) => {
-            const Icon = module.icon;
+              <h2>{module.title}</h2>
 
-            return (
-              <article
-                className="module-card"
-                key={module.title}
-              >
-                <div className="module-icon">
-                  <Icon size={24} />
-                </div>
+              <p>{module.description}</p>
 
-                <h2>{module.title}</h2>
-                <p>{module.description}</p>
-
-                <button type="button">
+              {module.enabled ? (
+                <Link
+                  to={module.path}
+                  className="module-card-link"
+                >
                   Open module
-                </button>
-              </article>
-            );
-          })}
-        </section>
-      </main>
-    </div>
+                </Link>
+              ) : (
+                <span className="module-unavailable">
+                  Coming soon
+                </span>
+              )}
+            </article>
+          );
+        })}
+      </section>
+    </>
   );
 }
 

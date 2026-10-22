@@ -137,79 +137,99 @@ export async function createEmployee(request, response, next) {
   }
 }
 
-export async function updateEmployee(request, response, next) {
-  const employeeId = parseEmployeeId(request.params.id);
+export async function updateEmployee(
+  request,
+  response,
+  next,
+) {
+  const employeeId = parseEmployeeId(
+    request.params.id,
+  );
 
   if (!employeeId) {
     return response.status(400).json({
       success: false,
-      message: "Employee ID must be a positive number",
+      message:
+        "Employee ID must be a positive number",
     });
   }
 
-  const submittedFields = Object.keys(request.body);
+  const submittedFields =
+    Object.keys(request.body);
 
   if (submittedFields.length === 0) {
     return response.status(400).json({
       success: false,
-      message: "Provide at least one field to update",
+      message:
+        "Provide at least one field to update",
     });
   }
 
-  const requiredTextFields = [
-    submittedData.staffNumber,
-    submittedData.firstName,
-    submittedData.lastName,
-    submittedData.email,
-  ];
-
-  const hasInvalidText = requiredTextFields.some(
-    (value) => typeof value !== "string" || value.trim() === ""
-  );
-
-  const hasInvalidPosition =
-    !Number.isInteger(submittedData.positionId) ||
-    submittedData.positionId <= 0;
-
-  if (hasInvalidText || hasInvalidPosition) {
-    return response.status(400).json({
-      success: false,
-      message: "Valid employee information and positionId are required",
-    });
-  }
+  const invalidFields =
+    submittedFields.filter(
+      (field) =>
+        !allowedFields.includes(field),
+    );
 
   if (invalidFields.length > 0) {
     return response.status(400).json({
       success: false,
-      message: `These fields cannot be updated: ${invalidFields.join(", ")}`,
+      message:
+        `These fields cannot be updated: ` +
+        invalidFields.join(", "),
     });
   }
 
- const hasInvalidValue = submittedFields.some((field) => {
-  if (field === "positionId") {
-    const positionId = Number(request.body.positionId);
+  const submittedData = {};
 
-    if (!Number.isInteger(positionId) || positionId <= 0) {
-      return true;
+  for (const field of submittedFields) {
+    const value = request.body[field];
+
+    if (field === "positionId") {
+      const positionId = Number(value);
+
+      if (
+        !Number.isInteger(positionId) ||
+        positionId <= 0
+      ) {
+        return response.status(400).json({
+          success: false,
+          message:
+            "positionId must be a positive integer",
+        });
+      }
+
+      submittedData.positionId =
+        positionId;
+
+      continue;
     }
 
-    request.body.positionId = positionId;
-    return false;
+    if (
+      typeof value !== "string" ||
+      value.trim() === ""
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          `${field} must be a non-empty string`,
+      });
+    }
+
+    submittedData[field] = value;
   }
 
-  return (
-    typeof request.body[field] !== "string" ||
-    request.body[field].trim() === ""
-  );
-});
-
   try {
-    const normalizedData = normalizeEmployeeData(request.body);
+    const normalizedData =
+      normalizeEmployeeData(
+        submittedData,
+      );
 
-    const employee = await employeeService.update(
-      employeeId,
-      normalizedData
-    );
+    const employee =
+      await employeeService.update(
+        employeeId,
+        normalizedData,
+      );
 
     if (!employee) {
       return response.status(404).json({
@@ -218,9 +238,10 @@ export async function updateEmployee(request, response, next) {
       });
     }
 
-    response.status(200).json({
+    return response.status(200).json({
       success: true,
-      message: "Employee updated successfully",
+      message:
+        "Employee updated successfully",
       data: employee,
     });
   } catch (error) {

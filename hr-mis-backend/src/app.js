@@ -14,7 +14,8 @@ import staffCardRoutes from "./routes/staffCardRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import publicStaffCardRoutes from "./routes/publicStaffCardRoutes.js";
 import missionRoutes from "./routes/missionRoutes.js";
-
+import positionRoutes from
+  "./routes/positionRoutes.js";
 const app = express();
 import cors from "cors";
 
@@ -75,7 +76,10 @@ app.use("/api/staff-cards", staffCardRoutes);
 app.use("/api/me", selfServiceRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/missions", missionRoutes);
-
+app.use(
+  "/api/positions",
+  positionRoutes,
+);
 // Handle unknown endpoints
 app.use((request, response) => {
   response.status(404).json({

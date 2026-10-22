@@ -4,23 +4,59 @@ import {
   Routes,
 } from "react-router-dom";
 
-import ProtectedRoute from "./auth/ProtectedRoute.jsx";
-import DashboardPage from "./pages/DashboardPage.jsx";
-import LoginPage from "./pages/LoginPage.jsx";
+import ProtectedRoute from
+  "./auth/ProtectedRoute.jsx";
+
+import DashboardLayout from
+  "./components/layout/DashboardLayout.jsx";
+
+import DashboardPage from
+  "./pages/DashboardPage.jsx";
+
+import EmployeeListPage from
+  "./pages/employees/EmployeeListPage.jsx";
+
+import EmployeeDetailsPage from
+  "./pages/employees/EmployeeDetailsPage.jsx";
+
+import LoginPage from
+  "./pages/LoginPage.jsx";
+
+import EmployeeCreatePage from
+  "./pages/employees/EmployeeCreatePage.jsx";
 
 function App() {
   return (
     <Routes>
+      {/* Public route */}
       <Route
         path="/login"
         element={<LoginPage />}
       />
 
+      {/* All authenticated pages */}
       <Route element={<ProtectedRoute />}>
-        <Route
-          path="/dashboard"
-          element={<DashboardPage />}
-        />
+        {/* All dashboard pages with sidebar */}
+        <Route element={<DashboardLayout />}>
+          <Route
+            path="/dashboard"
+            element={<DashboardPage />}
+          />
+
+          <Route
+            path="/employees"
+            element={<EmployeeListPage />}
+          />
+
+          <Route
+            path="/employees/new"
+            element={<EmployeeCreatePage />}
+          />
+          <Route
+            path="/employees/:employeeId"
+            element={<EmployeeDetailsPage />}
+          />
+        </Route>
       </Route>
 
       <Route
