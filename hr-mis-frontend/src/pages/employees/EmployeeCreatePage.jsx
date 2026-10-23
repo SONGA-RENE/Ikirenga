@@ -21,7 +21,7 @@ import {
 } from "../../api/employeeApi.js";
 
 import {
-  getPositions,
+  getAvailablePositions,
 } from "../../api/positionApi.js";
 
 const initialFormData = {
@@ -56,7 +56,7 @@ function EmployeeCreatePage() {
     async function loadPositions() {
       try {
         const result =
-          await getPositions({
+          await getAvailablePositions({
             signal: controller.signal,
           });
 
@@ -332,7 +332,10 @@ function EmployeeCreatePage() {
                 name="positionId"
                 value={formData.positionId}
                 onChange={handleChange}
-                disabled={isLoadingPositions}
+                disabled={
+                  isLoadingPositions ||
+                  positions.length === 0
+                }
                 required
               >
                 <option value="">
@@ -340,6 +343,13 @@ function EmployeeCreatePage() {
                     ? "Loading positions..."
                     : "Select employee position"}
                 </option>
+
+                {!isLoadingPositions &&
+                  positions.length === 0 && (
+                    <option value="" disabled>
+                      No vacant positions available
+                    </option>
+                  )}
 
                 {Object.entries(
                   positionsByDepartment,
@@ -359,6 +369,12 @@ function EmployeeCreatePage() {
                             value={position.id}
                           >
                             {position.title}
+                            {position.locationName
+                              ? ` — ${position.locationName}`
+                              : ""}
+                            {position.positionCode
+                              ? ` (${position.positionCode})`
+                              : ""}
                           </option>
                         ),
                       )}
@@ -368,9 +384,10 @@ function EmployeeCreatePage() {
               </select>
 
               <small>
-                The department is assigned
-                automatically through the
-                selected position.
+                Only active and currently vacant
+                positions are displayed. The
+                organizational unit is assigned
+                automatically.
               </small>
             </label>
           </div>
@@ -388,9 +405,11 @@ function EmployeeCreatePage() {
             type="submit"
             className="form-submit-button"
             disabled={
-              isSubmitting ||
-              isLoadingPositions
-            }
+            isSubmitting ||
+            isLoadingPositions ||
+            positions.length === 0
+          }
+            
           >
             <Save size={18} />
 

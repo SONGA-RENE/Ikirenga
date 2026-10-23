@@ -125,7 +125,11 @@ export async function createEmployee(request, response, next) {
   try {
     const normalizedData = normalizeEmployeeData(submittedData);
 
-    const employee = await employeeService.create(normalizedData);
+   const employee =
+    await employeeService.create(
+      normalizedData,
+      request.user.id,
+    );
 
     response.status(201).json({
       success: true,
@@ -154,8 +158,9 @@ export async function updateEmployee(
     });
   }
 
-  const submittedFields =
-    Object.keys(request.body);
+  const submittedFields = Object.keys(
+    request.body,
+  );
 
   if (submittedFields.length === 0) {
     return response.status(400).json({
@@ -180,49 +185,26 @@ export async function updateEmployee(
     });
   }
 
-  const submittedData = {};
+  const hasInvalidValue =
+    submittedFields.some(
+      (field) =>
+        typeof request.body[field] !==
+          "string" ||
+        request.body[field].trim() === "",
+    );
 
-  for (const field of submittedFields) {
-    const value = request.body[field];
-
-    if (field === "positionId") {
-      const positionId = Number(value);
-
-      if (
-        !Number.isInteger(positionId) ||
-        positionId <= 0
-      ) {
-        return response.status(400).json({
-          success: false,
-          message:
-            "positionId must be a positive integer",
-        });
-      }
-
-      submittedData.positionId =
-        positionId;
-
-      continue;
-    }
-
-    if (
-      typeof value !== "string" ||
-      value.trim() === ""
-    ) {
-      return response.status(400).json({
-        success: false,
-        message:
-          `${field} must be a non-empty string`,
-      });
-    }
-
-    submittedData[field] = value;
+  if (hasInvalidValue) {
+    return response.status(400).json({
+      success: false,
+      message:
+        "Submitted employee fields cannot be empty",
+    });
   }
 
   try {
     const normalizedData =
       normalizeEmployeeData(
-        submittedData,
+        request.body,
       );
 
     const employee =
@@ -260,7 +242,11 @@ export async function deactivateEmployee(request, response, next) {
   }
 
   try {
-    const employee = await employeeService.deactivate(employeeId);
+    const employee =
+      await employeeService.deactivate(
+        employeeId,
+        request.user.id,
+      );
 
     if (!employee) {
       return response.status(404).json({

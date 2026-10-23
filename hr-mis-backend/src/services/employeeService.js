@@ -60,50 +60,173 @@ export async function findById(employeeId) {
   return findEmployeeById(employeeId);
 }
 
-export async function create(employeeData) {
-  const {
-    staffNumber,
-    firstName,
-    lastName,
-    email,
-    positionId,
-  } = employeeData;
-
+export async function create(
+  employeeData,
+  createdByUserId,
+) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    const result = await client.query(
+    const positionResult = await client.query(
       `
-        INSERT INTO employees (
-          staff_number,
-          first_name,
-          last_name,
-          email,
-          position_id
-        )
-        VALUES ($1, $2, $3, $4, $5)
-        RETURNING id
+        SELECT
+          positions.id,
+          positions.position_code
+            AS "positionCode",
+          positions.title,
+          positions.is_active AS "isActive",
+          departments.name AS department
+
+        FROM positions
+
+        JOIN departments
+          ON departments.id =
+            positions.department_id
+
+        WHERE positions.id = $1
+
+        FOR UPDATE OF positions
       `,
-      [
-        staffNumber,
-        firstName,
-        lastName,
-        email,
-        positionId,
-      ]
+      [employeeData.positionId],
     );
 
-    const employee = await findEmployeeById(
-      result.rows[0].id,
-      false,
-      client
+    const position =
+      positionResult.rows[0];
+
+    if (!position) {
+      const error = new Error(
+        "Selected position does not exist",
+      );
+
+      error.statusCode = 404;
+      throw error;
+    }
+
+    if (!position.isActive) {
+      const error = new Error(
+        "Selected position is inactive",
+      );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const occupationResult =
+      await client.query(
+        `
+          SELECT
+            employee_position_assignments.id,
+            employee_position_assignments.employee_id
+              AS "employeeId",
+
+            CONCAT(
+              employees.first_name,
+              ' ',
+              employees.last_name
+            ) AS "employeeName"
+
+          FROM employee_position_assignments
+
+          JOIN employees
+            ON employees.id =
+              employee_position_assignments.employee_id
+
+          WHERE
+            employee_position_assignments.position_id =
+              $1
+            AND
+              employee_position_assignments.end_date
+                IS NULL
+        `,
+        [employeeData.positionId],
+      );
+
+    if (occupationResult.rows[0]) {
+      const error = new Error(
+        `The selected position is already occupied by ` +
+        `${occupationResult.rows[0].employeeName}`,
+      );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const employeeResult =
+      await client.query(
+        `
+          INSERT INTO employees (
+            staff_number,
+            first_name,
+            last_name,
+            email,
+            position_id
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5
+          )
+          RETURNING
+            id,
+            staff_number AS "staffNumber",
+            first_name AS "firstName",
+            last_name AS "lastName",
+            email,
+            is_active AS "isActive",
+            created_at AS "createdAt",
+            updated_at AS "updatedAt",
+            position_id AS "positionId"
+        `,
+        [
+          employeeData.staffNumber,
+          employeeData.firstName,
+          employeeData.lastName,
+          employeeData.email,
+          employeeData.positionId,
+        ],
+      );
+
+    const employee =
+      employeeResult.rows[0];
+
+    await client.query(
+      `
+        INSERT INTO employee_position_assignments (
+          employee_id,
+          position_id,
+          assignment_type,
+          start_date,
+          assigned_by_user_id,
+          assignment_note
+        )
+        VALUES (
+          $1,
+          $2,
+          'SUBSTANTIVE',
+          CURRENT_DATE,
+          $3,
+          'Initial position assigned during employee creation'
+        )
+      `,
+      [
+        employee.id,
+        employeeData.positionId,
+        createdByUserId,
+      ],
     );
 
     await client.query("COMMIT");
 
-    return employee;
+    return {
+      ...employee,
+      positionCode: position.positionCode,
+      position: position.title,
+      department: position.department,
+    };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -172,39 +295,103 @@ export async function update(employeeId, updates) {
   }
 }
 
-export async function deactivate(employeeId) {
+export async function deactivate(
+  employeeId,
+  endedByUserId,
+) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    const result = await client.query(
-      `
-        UPDATE employees
-        SET
-          is_active = FALSE,
-          updated_at = CURRENT_TIMESTAMP
-        WHERE id = $1
-          AND is_active = TRUE
-        RETURNING id
-      `,
-      [employeeId]
-    );
+    const employeeResult =
+      await client.query(
+        `
+          SELECT
+            id,
+            staff_number AS "staffNumber",
+            first_name AS "firstName",
+            last_name AS "lastName",
+            email,
+            is_active AS "isActive",
+            position_id AS "positionId"
 
-    if (result.rowCount === 0) {
+          FROM employees
+
+          WHERE id = $1
+
+          FOR UPDATE
+        `,
+        [employeeId],
+      );
+
+    const employee =
+      employeeResult.rows[0];
+
+    if (!employee) {
       await client.query("ROLLBACK");
       return null;
     }
 
-    const employee = await findEmployeeById(
-      result.rows[0].id,
-      true,
-      client
+    if (!employee.isActive) {
+      const error = new Error(
+        "Employee is already inactive",
+      );
+
+      error.statusCode = 409;
+      throw error;
+    }
+
+    const updateResult =
+      await client.query(
+        `
+          UPDATE employees
+          SET
+            is_active = FALSE,
+            updated_at = CURRENT_TIMESTAMP
+          WHERE id = $1
+          RETURNING
+            id,
+            staff_number AS "staffNumber",
+            first_name AS "firstName",
+            last_name AS "lastName",
+            email,
+            is_active AS "isActive",
+            position_id AS "positionId",
+            updated_at AS "updatedAt"
+        `,
+        [employeeId],
+      );
+
+    await client.query(
+      `
+        UPDATE employee_position_assignments
+        SET
+          end_date = CURRENT_DATE,
+          ended_by_user_id = $2,
+          assignment_note =
+            CASE
+              WHEN assignment_note IS NULL
+                OR BTRIM(assignment_note) = ''
+              THEN
+                'Assignment ended because employee was deactivated'
+              ELSE
+                assignment_note ||
+                E'\nAssignment ended because employee was deactivated'
+            END,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE employee_id = $1
+          AND end_date IS NULL
+      `,
+      [
+        employeeId,
+        endedByUserId,
+      ],
     );
 
     await client.query("COMMIT");
 
-    return employee;
+    return updateResult.rows[0];
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import fs from "node:fs";
 
 import multer from "multer";
 
@@ -11,6 +12,10 @@ const employeePhotoDirectory = path.resolve(
   currentDirectory,
   "../../uploads/employees",
 );
+
+fs.mkdirSync(employeePhotoDirectory, {
+  recursive: true,
+});
 
 const allowedMimeTypes = new Map([
   ["image/jpeg", ".jpg"],
@@ -53,3 +58,4 @@ export const uploadEmployeePhoto = multer({
     fileSize: 5 * 1024 * 1024,
   },
 }).single("photo");
+

@@ -25,6 +25,9 @@ import LoginPage from
 import EmployeeCreatePage from
   "./pages/employees/EmployeeCreatePage.jsx";
 
+import EmployeeEditPage from
+  "./pages/employees/EmployeeEditPage.jsx";
+
 function App() {
   return (
     <Routes>
@@ -55,6 +58,10 @@ function App() {
           <Route
             path="/employees/:employeeId"
             element={<EmployeeDetailsPage />}
+          />
+          <Route
+            path="employees/:employeeId/edit"
+            element={<EmployeeEditPage />}
           />
         </Route>
       </Route>

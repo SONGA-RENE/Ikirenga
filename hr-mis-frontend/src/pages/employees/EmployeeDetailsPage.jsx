@@ -20,11 +20,25 @@ import {
   useParams,
 } from "react-router-dom";
 
-import { getEmployeeById } from
-  "../../api/employeeApi.js";
+import {
+  getEmployeeById,
+  getEmployeePositionAssignments,
+} from "../../api/employeeApi.js";
 
 import { useAuth } from
   "../../auth/AuthContext.jsx";
+  
+import PositionAssignmentManager from
+  "../../pages/employees/PositionAssignmentManager.jsx";
+
+import EmployeeProfilePanel from
+  "../../pages/employees/EmployeeProfilePanel.jsx";
+
+import FamilyContactsPanel from
+  "../../pages/employees/FamilyContactsPanel.jsx";
+
+import EducationRecordsPanel from
+  "../../pages/employees/EducationRecordsPanel.jsx"; 
 
 const apiBaseUrl =
   import.meta.env.VITE_API_BASE_URL;
@@ -79,6 +93,11 @@ function EmployeeDetailsPage() {
   const [employee, setEmployee] =
     useState(null);
 
+  const [
+    positionHistory,
+    setPositionHistory,
+  ] = useState(null);
+
   const [isLoading, setIsLoading] =
     useState(true);
 
@@ -94,13 +113,24 @@ function EmployeeDetailsPage() {
     setError("");
 
     try {
-      const result =
-        await getEmployeeById(
+     const [
+        employeeResult,
+        positionHistoryResult,
+      ] = await Promise.all([
+        getEmployeeById(
           employeeId,
           { signal },
-        );
+        ),
+        getEmployeePositionAssignments(
+          employeeId,
+          { signal },
+        ),
+      ]);
 
-      setEmployee(result);
+      setEmployee(employeeResult);
+      setPositionHistory(
+        positionHistoryResult,
+    );
     } catch (requestError) {
       if (
         requestError.name ===
@@ -122,6 +152,26 @@ function EmployeeDetailsPage() {
       }
     }
   }
+
+  const assignments =
+  positionHistory?.assignments || [];
+
+const currentSubstantive =
+  assignments.find(
+    (assignment) =>
+      assignment.isCurrent &&
+      assignment.assignmentType ===
+        "SUBSTANTIVE",
+  );
+
+const currentTemporary =
+  assignments.find(
+    (assignment) =>
+      assignment.isCurrent &&
+      ["ACTING", "INTERIM"].includes(
+        assignment.assignmentType,
+      ),
+  );
 
   useEffect(() => {
     const controller =
@@ -258,16 +308,16 @@ function EmployeeDetailsPage() {
         </div>
 
         {canManageEmployees && (
-          <button
-            type="button"
+         <Link
+            to={`/employees/${employee.id}/edit`}
             className="page-primary-action"
           >
             <Edit3 size={18} />
             Edit employee
-          </button>
+          </Link>
         )}
       </header>
-
+     
       <section className="employee-details-grid">
         <article className="details-card">
           <div className="details-card-header">
@@ -350,10 +400,11 @@ function EmployeeDetailsPage() {
             </div>
 
             <div>
-              <dt>Position</dt>
+              <dt>Substantive position</dt>
 
               <dd>
-                {employee.position ||
+                {currentSubstantive?.position ||
+                  employee.position ||
                   "Not assigned"}
               </dd>
             </div>
@@ -367,6 +418,24 @@ function EmployeeDetailsPage() {
               <dd>
                 {employee.department ||
                   "Not assigned"}
+              </dd>
+            </div>
+
+            <div>
+              <dt>Temporary appointment</dt>
+
+              <dd>
+                {currentTemporary ? (
+                  <>
+                    <strong>
+                      {currentTemporary.assignmentType}
+                    </strong>
+                    {" — "}
+                    {currentTemporary.position}
+                  </>
+                ) : (
+                  "None"
+                )}
               </dd>
             </div>
 
@@ -423,6 +492,155 @@ function EmployeeDetailsPage() {
             </div>
           </dl>
         </article>
+      </section>
+
+      {/* Employee Profile Panel */}
+      <EmployeeProfilePanel
+          employeeId={employee.id}
+        />
+
+      {/* Education Records Panel */}
+      <EducationRecordsPanel
+        employeeId={employee.id}
+      />
+
+        {/* Family Contacts Panel */}
+        <FamilyContactsPanel
+          employeeId={employee.id}
+        />
+
+      {/* Position Assignment Manager */}
+       {canManageEmployees && (
+        <PositionAssignmentManager
+          employeeId={employee.id}
+          assignments={assignments}
+          onChanged={() => loadEmployee()}
+        />
+      )}
+       
+
+      <section className="assignment-history-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">
+              Position management
+            </p>
+
+            <h2>Appointment history</h2>
+
+            <p>
+              Substantive positions and temporary
+              acting or interim appointments.
+            </p>
+          </div>
+        </div>
+
+        {assignments.length === 0 ? (
+          <div className="empty-history-state">
+            <BriefcaseBusiness size={22} />
+
+            <p>
+              No position-assignment history is
+              available for this employee.
+            </p>
+          </div>
+        ) : (
+          <div className="assignment-history-list">
+            {assignments.map((assignment) => (
+              <article
+                className="assignment-history-item"
+                key={assignment.id}
+              >
+                <div className="assignment-history-main">
+                  <div className="assignment-title-row">
+                    <h3>{assignment.position}</h3>
+
+                    <span
+                      className={`assignment-type-badge assignment-type-${assignment.assignmentType.toLowerCase()}`}
+                    >
+                      {assignment.assignmentType}
+                    </span>
+
+                    {assignment.isCurrent && (
+                      <span className="assignment-current-badge">
+                        {assignment.assignmentType ===
+                        "SUBSTANTIVE"
+                          ? "Active substantive position"
+                          : "Temporary assignment"}
+                      </span>
+                    )}
+                  </div>
+
+                  <p>
+                    {assignment.department}
+
+                    {assignment.locationName
+                      ? ` — ${assignment.locationName}`
+                      : ""}
+                  </p>
+
+                  <span className="assignment-code">
+                    {assignment.positionCode}
+                  </span>
+                </div>
+
+                <dl className="assignment-history-details">
+                  <div>
+                    <dt>Started</dt>
+                    <dd>
+                      {formatDate(
+                        assignment.startDate,
+                      )}
+                    </dd>
+                  </div>
+
+                  <div>
+                    <dt>Expected end</dt>
+                    <dd>
+                      {formatDate(
+                        assignment.expectedEndDate,
+                      )}
+                    </dd>
+                  </div>
+
+                  <div>
+                    <dt>Actual end</dt>
+                    <dd>
+                      {assignment.endDate
+                        ? formatDate(
+                            assignment.endDate,
+                          )
+                        : "Current"}
+                    </dd>
+                  </div>
+
+                  <div>
+                    <dt>Assigned by</dt>
+                    <dd>
+                      {assignment.assignedBy ||
+                        "System migration"}
+                    </dd>
+                  </div>
+
+                  {assignment.endedBy && (
+                    <div>
+                      <dt>Ended by</dt>
+                      <dd>
+                        {assignment.endedBy}
+                      </dd>
+                    </div>
+                  )}
+                </dl>
+
+                {assignment.assignmentNote && (
+                  <p className="assignment-note">
+                    {assignment.assignmentNote}
+                  </p>
+                )}
+              </article>
+            ))}
+          </div>
+        )}
       </section>
     </>
   );
