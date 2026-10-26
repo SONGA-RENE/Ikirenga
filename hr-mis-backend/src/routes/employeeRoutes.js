@@ -35,53 +35,39 @@ import {
 } from "../controllers/employeeEducationController.js";
 
 import {
-  downloadStaffCard,
-} from "../controllers/staffCardController.js";
+  cancelSeparation,
+  completeSeparation,
+  confirmSeparation,
+  createSeparation,
+  getEmployeeSeparations,
+} from "../controllers/employeeSeparationController.js";
 
-import {
-  revealIdentifier,
-} from "../controllers/employeeSensitiveDataController.js";
+import { getLifecycleDashboard } from "../controllers/employeeLifecycleDashboardController.js";
 
-import {
-  uploadEmployeePhoto,
-} from "../middleware/employeePhotoMiddleware.js";
+import { downloadStaffCard } from "../controllers/staffCardController.js";
 
-import {
-  authenticate,
-} from "../middleware/authMiddleware.js";
+import { revealIdentifier } from "../controllers/employeeSensitiveDataController.js";
 
-import {
-  authorizeRoles,
-} from "../middleware/roleMiddleware.js";
+import { uploadEmployeePhoto } from "../middleware/employeePhotoMiddleware.js";
+
+import { authenticate } from "../middleware/authMiddleware.js";
+
+import { authorizeRoles } from "../middleware/roleMiddleware.js";
 
 const router = express.Router();
 
-router.use(
-  authenticate,
-  authorizeRoles("ADMIN", "HR"),
-);
+router.use(authenticate, authorizeRoles("ADMIN", "HR"));
 
 // Employee collection
-router.get(
-  "/",
-  getEmployees,
-);
+router.get("/dashboard/lifecycle", getLifecycleDashboard);
+router.get("/", getEmployees);
 
-router.post(
-  "/",
-  createEmployee,
-);
+router.post("/", createEmployee);
 
 // Position assignments
-router.post(
-  "/:employeeId/position-assignments",
-  createPositionAssignment,
-);
+router.post("/:employeeId/position-assignments", createPositionAssignment);
 
-router.get(
-  "/:employeeId/position-assignments",
-  getPositionAssignmentHistory,
-);
+router.get("/:employeeId/position-assignments", getPositionAssignmentHistory);
 
 router.patch(
   "/:employeeId/position-assignments/:assignmentId/end",
@@ -89,90 +75,58 @@ router.patch(
 );
 
 // Employee profile
-router.get(
-  "/:employeeId/profile",
-  getEmployeeProfile,
-);
+router.get("/:employeeId/profile", getEmployeeProfile);
 
-router.patch(
-  "/:employeeId/profile",
-  updateEmployeeProfile,
-);
+router.patch("/:employeeId/profile", updateEmployeeProfile);
 
-router.post(
-  "/:employeeId/profile/reveal-identifier",
-  revealIdentifier,
-);
+router.post("/:employeeId/profile/reveal-identifier", revealIdentifier);
 
 // Employee family contacts
-router.get(
-  "/:employeeId/family-contacts",
-  getFamilyContacts,
-);
+router.get("/:employeeId/family-contacts", getFamilyContacts);
 
-router.post(
-  "/:employeeId/family-contacts",
-  addFamilyContact,
-);
+router.post("/:employeeId/family-contacts", addFamilyContact);
 
-router.patch(
-  "/:employeeId/family-contacts/:contactId",
-  editFamilyContact,
-);
+router.patch("/:employeeId/family-contacts/:contactId", editFamilyContact);
 
-router.delete(
-  "/:employeeId/family-contacts/:contactId",
-  removeFamilyContact,
-);
+router.delete("/:employeeId/family-contacts/:contactId", removeFamilyContact);
 
 // Employee education records
-router.get(
-  "/:employeeId/education",
-  getEducationRecords,
-);
+router.get("/:employeeId/education", getEducationRecords);
 
-router.post(
-  "/:employeeId/education",
-  addEducationRecord,
-);
+router.post("/:employeeId/education", addEducationRecord);
 
-router.patch(
-  "/:employeeId/education/:educationId",
-  editEducationRecord,
-);
+router.patch("/:employeeId/education/:educationId", editEducationRecord);
 
-router.delete(
-  "/:employeeId/education/:educationId",
-  removeEducationRecord,
-);
+router.delete("/:employeeId/education/:educationId", removeEducationRecord);
 
 // Employee photo
-router.patch(
-  "/:id/photo",
-  uploadEmployeePhoto,
-  uploadPhoto,
-);
+router.patch("/:id/photo", uploadEmployeePhoto, uploadPhoto);
 
 // Staff card PDF
-router.get(
-  "/:id/staff-card",
-  downloadStaffCard,
-);
+router.get("/:id/staff-card", downloadStaffCard);
 
 // General employee record routes
-router.get(
-  "/:id",
-  getEmployee,
-);
+router.get("/:id", getEmployee);
+
+// Employee separation routes
+router.post("/:employeeId/separations", createSeparation);
+
+router.get("/:employeeId/separations", getEmployeeSeparations);
 
 router.patch(
-  "/:id",
-  updateEmployee,
+  "/:employeeId/separations/:separationId/confirm",
+  confirmSeparation,
 );
 
-router.delete(
-  "/:id",
-  deactivateEmployee,
+router.patch("/:employeeId/separations/:separationId/cancel", cancelSeparation);
+
+router.patch(
+  "/:employeeId/separations/:separationId/complete",
+  completeSeparation,
 );
+
+router.patch("/:id", updateEmployee);
+
+router.delete("/:id", deactivateEmployee);
 
 export default router;

@@ -1,15 +1,10 @@
 import apiClient from "./apiClient.js";
 
-function readSuccessfulPayload(
-  response,
-  fallbackMessage,
-) {
+function readSuccessfulPayload(response, fallbackMessage) {
   const payload = response.data;
 
   if (!payload?.success) {
-    throw new Error(
-      payload?.message || fallbackMessage,
-    );
+    throw new Error(payload?.message || fallbackMessage);
   }
 
   return payload;
@@ -19,13 +14,8 @@ function readSuccessfulPayload(
 // EMPLOYEES
 // =====================================================
 
-export async function getEmployees({
-  signal,
-} = {}) {
-  const response = await apiClient.get(
-    "/api/employees",
-    { signal },
-  );
+export async function getEmployees({ signal } = {}) {
+  const response = await apiClient.get("/api/employees", { signal });
 
   const payload = readSuccessfulPayload(
     response,
@@ -33,9 +23,7 @@ export async function getEmployees({
   );
 
   return {
-    employees: Array.isArray(payload.data)
-      ? payload.data
-      : [],
+    employees: Array.isArray(payload.data) ? payload.data : [],
 
     count:
       typeof payload.count === "number"
@@ -44,48 +32,27 @@ export async function getEmployees({
   };
 }
 
-export async function getEmployeeById(
-  employeeId,
-  { signal } = {},
-) {
-  const response = await apiClient.get(
-    `/api/employees/${employeeId}`,
-    { signal },
-  );
+export async function getEmployeeById(employeeId, { signal } = {}) {
+  const response = await apiClient.get(`/api/employees/${employeeId}`, {
+    signal,
+  });
 
-  return readSuccessfulPayload(
-    response,
-    "Failed to retrieve employee",
-  ).data;
+  return readSuccessfulPayload(response, "Failed to retrieve employee").data;
 }
 
-export async function createEmployee(
-  employeeData,
-) {
-  const response = await apiClient.post(
-    "/api/employees",
-    employeeData,
-  );
+export async function createEmployee(employeeData) {
+  const response = await apiClient.post("/api/employees", employeeData);
 
-  return readSuccessfulPayload(
-    response,
-    "Failed to create employee",
-  ).data;
+  return readSuccessfulPayload(response, "Failed to create employee").data;
 }
 
-export async function updateEmployee(
-  employeeId,
-  employeeData,
-) {
+export async function updateEmployee(employeeId, employeeData) {
   const response = await apiClient.patch(
     `/api/employees/${employeeId}`,
     employeeData,
   );
 
-  const payload = readSuccessfulPayload(
-    response,
-    "Failed to update employee",
-  );
+  const payload = readSuccessfulPayload(response, "Failed to update employee");
 
   return {
     message: payload.message,
@@ -93,10 +60,7 @@ export async function updateEmployee(
   };
 }
 
-export async function uploadEmployeePhoto(
-  employeeId,
-  photoFile,
-) {
+export async function uploadEmployeePhoto(employeeId, photoFile) {
   const formData = new FormData();
 
   formData.append("photo", photoFile);
@@ -111,10 +75,8 @@ export async function uploadEmployeePhoto(
     },
   );
 
-  return readSuccessfulPayload(
-    response,
-    "Failed to upload employee photo",
-  ).data;
+  return readSuccessfulPayload(response, "Failed to upload employee photo")
+    .data;
 }
 
 // =====================================================
@@ -181,25 +143,16 @@ export async function endEmployeePositionAssignment(
 // EMPLOYEE PROFILE
 // =====================================================
 
-export async function getEmployeeProfile(
-  employeeId,
-  { signal } = {},
-) {
-  const response = await apiClient.get(
-    `/api/employees/${employeeId}/profile`,
-    { signal },
-  );
+export async function getEmployeeProfile(employeeId, { signal } = {}) {
+  const response = await apiClient.get(`/api/employees/${employeeId}/profile`, {
+    signal,
+  });
 
-  return readSuccessfulPayload(
-    response,
-    "Failed to retrieve employee profile",
-  ).data;
+  return readSuccessfulPayload(response, "Failed to retrieve employee profile")
+    .data;
 }
 
-export async function updateEmployeeProfile(
-  employeeId,
-  profileData,
-) {
+export async function updateEmployeeProfile(employeeId, profileData) {
   const response = await apiClient.patch(
     `/api/employees/${employeeId}/profile`,
     profileData,
@@ -221,10 +174,7 @@ export async function updateEmployeeProfile(
  * component state. Never store the returned value
  * in localStorage, sessionStorage, or application logs.
  */
-export async function revealEmployeeIdentifier(
-  employeeId,
-  revealData,
-) {
+export async function revealEmployeeIdentifier(employeeId, revealData) {
   const response = await apiClient.post(
     `/api/employees/${employeeId}/profile/reveal-identifier`,
     revealData,
@@ -237,8 +187,7 @@ export async function revealEmployeeIdentifier(
 
   return {
     message: payload.message,
-    identifierType:
-      payload.data?.identifierType,
+    identifierType: payload.data?.identifierType,
     value: payload.data?.value,
   };
 }
@@ -247,25 +196,17 @@ export async function revealEmployeeIdentifier(
 // FAMILY AND EMERGENCY CONTACTS
 // =====================================================
 
-export async function getEmployeeFamilyContacts(
-  employeeId,
-  { signal } = {},
-) {
+export async function getEmployeeFamilyContacts(employeeId, { signal } = {}) {
   const response = await apiClient.get(
     `/api/employees/${employeeId}/family-contacts`,
     { signal },
   );
 
-  return readSuccessfulPayload(
-    response,
-    "Failed to retrieve family contacts",
-  ).data;
+  return readSuccessfulPayload(response, "Failed to retrieve family contacts")
+    .data;
 }
 
-export async function createEmployeeFamilyContact(
-  employeeId,
-  contactData,
-) {
+export async function createEmployeeFamilyContact(employeeId, contactData) {
   const response = await apiClient.post(
     `/api/employees/${employeeId}/family-contacts`,
     contactData,
@@ -303,10 +244,7 @@ export async function updateEmployeeFamilyContact(
   };
 }
 
-export async function archiveEmployeeFamilyContact(
-  employeeId,
-  contactId,
-) {
+export async function archiveEmployeeFamilyContact(employeeId, contactId) {
   const response = await apiClient.delete(
     `/api/employees/${employeeId}/family-contacts/${contactId}`,
   );
@@ -326,25 +264,17 @@ export async function archiveEmployeeFamilyContact(
 // EDUCATION RECORDS
 // =====================================================
 
-export async function getEmployeeEducationRecords(
-  employeeId,
-  { signal } = {},
-) {
+export async function getEmployeeEducationRecords(employeeId, { signal } = {}) {
   const response = await apiClient.get(
     `/api/employees/${employeeId}/education`,
     { signal },
   );
 
-  return readSuccessfulPayload(
-    response,
-    "Failed to retrieve education records",
-  ).data;
+  return readSuccessfulPayload(response, "Failed to retrieve education records")
+    .data;
 }
 
-export async function createEmployeeEducationRecord(
-  employeeId,
-  educationData,
-) {
+export async function createEmployeeEducationRecord(employeeId, educationData) {
   const response = await apiClient.post(
     `/api/employees/${employeeId}/education`,
     educationData,
@@ -382,10 +312,7 @@ export async function updateEmployeeEducationRecord(
   };
 }
 
-export async function archiveEmployeeEducationRecord(
-  employeeId,
-  educationId,
-) {
+export async function archiveEmployeeEducationRecord(employeeId, educationId) {
   const response = await apiClient.delete(
     `/api/employees/${employeeId}/education/${educationId}`,
   );
@@ -401,3 +328,99 @@ export async function archiveEmployeeEducationRecord(
   };
 }
 
+export async function getEmployeeSeparations(employeeId, { signal } = {}) {
+  const response = await apiClient.get(
+    `/api/employees/${employeeId}/separations`,
+    { signal },
+  );
+
+  const payload = readSuccessfulPayload(
+    response,
+    "Failed to retrieve employee separations",
+  );
+
+  return Array.isArray(payload.data) ? payload.data : [];
+}
+
+export async function createEmployeeSeparation(employeeId, separationData) {
+  const response = await apiClient.post(
+    `/api/employees/${employeeId}/separations`,
+    separationData,
+  );
+
+  const payload = readSuccessfulPayload(
+    response,
+    "Failed to record employee separation",
+  );
+
+  return {
+    message: payload.message,
+    separation: payload.data,
+  };
+}
+
+export async function confirmEmployeeSeparation(employeeId, separationId) {
+  const response = await apiClient.patch(
+    `/api/employees/${employeeId}/separations/${separationId}/confirm`,
+  );
+
+  const payload = readSuccessfulPayload(
+    response,
+    "Failed to confirm employee separation",
+  );
+
+  return {
+    message: payload.message,
+    separation: payload.data,
+  };
+}
+
+export async function cancelEmployeeSeparation(
+  employeeId,
+  separationId,
+  cancellationReason,
+) {
+  const response = await apiClient.patch(
+    `/api/employees/${employeeId}/separations/${separationId}/cancel`,
+    {
+      cancellationReason,
+    },
+  );
+
+  const payload = readSuccessfulPayload(
+    response,
+    "Failed to cancel employee separation",
+  );
+
+  return {
+    message: payload.message,
+    separation: payload.data,
+  };
+}
+
+export async function completeEmployeeSeparation(employeeId, separationId) {
+  const response = await apiClient.patch(
+    `/api/employees/${employeeId}/separations/${separationId}/complete`,
+  );
+
+  const payload = readSuccessfulPayload(
+    response,
+    "Failed to complete employee separation",
+  );
+
+  return {
+    message: payload.message,
+    result: payload.data,
+  };
+}
+
+export async function getEmployeeLifecycleDashboard({ signal } = {}) {
+  const response = await apiClient.get("/api/employees/dashboard/lifecycle", {
+    signal,
+  });
+
+  return readSuccessfulPayload(
+    response,
+    "Failed to retrieve employee lifecycle dashboard",
+  ).data;
+}

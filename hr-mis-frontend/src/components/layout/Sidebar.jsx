@@ -31,7 +31,7 @@ const navigationItems = [
     title: "Contracts",
     path: "/contracts",
     icon: FileText,
-    enabled: false,
+    enabled: true,
   },
   {
     title: "Leave",

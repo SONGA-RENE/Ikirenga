@@ -15,43 +15,119 @@ const employeeColumns = `
   d.name AS "department"
 `;
 
-async function findEmployeeById(
-  employeeId,
-  includeInactive = false,
-  database = pool
-) {
-  const activeCondition = includeInactive
-    ? ""
-    : "AND e.is_active = TRUE";
-
-  const result = await database.query(
+async function findEmployeeById(employeeId, client = pool) {
+  const result = await client.query(
     `
-      SELECT ${employeeColumns}
-      FROM employees e
-      JOIN positions p
-        ON p.id = e.position_id
-      JOIN departments d
-        ON d.id = p.department_id
-      WHERE e.id = $1
-        ${activeCondition}
+      SELECT
+        employees.id,
+        employees.staff_number AS "staffNumber",
+        employees.first_name AS "firstName",
+        employees.last_name AS "lastName",
+        employees.email,
+        employees.photo_filename AS "photoFilename",
+        employees.is_active
+          AS "isActive",
+
+        employees.employment_status
+          AS "employmentStatus",
+
+        employees.status_effective_date
+          AS "statusEffectiveDate",
+
+        employees.last_working_date
+          AS "lastWorkingDate",
+
+        employees.employment_status_reason
+          AS "employmentStatusReason",
+
+        employees.created_at
+          AS "createdAt",
+        employees.updated_at AS "updatedAt",
+        positions.id AS "positionId",
+        positions.title AS "position",
+        departments.id AS "departmentId",
+        departments.name AS "department"
+      FROM employees
+      LEFT JOIN positions
+        ON positions.id = employees.position_id
+      LEFT JOIN departments
+        ON departments.id = positions.department_id
+      WHERE employees.id = $1
     `,
-    [employeeId]
+    [employeeId],
   );
 
   return result.rows[0] || null;
 }
 
 export async function findAll() {
-  const result = await pool.query(`
-    SELECT ${employeeColumns}
-    FROM employees e
-    JOIN positions p
-      ON p.id = e.position_id
-    JOIN departments d
-      ON d.id = p.department_id
-    WHERE e.is_active = TRUE
-    ORDER BY e.id ASC
-  `);
+  const result = await pool.query(
+    `
+      SELECT
+        employees.id,
+
+        employees.staff_number
+          AS "staffNumber",
+
+        employees.first_name
+          AS "firstName",
+
+        employees.last_name
+          AS "lastName",
+
+        employees.email,
+
+        employees.photo_filename
+          AS "photoFilename",
+
+        employees.is_active
+          AS "isActive",
+
+        employees.employment_status
+          AS "employmentStatus",
+
+        employees.status_effective_date
+          AS "statusEffectiveDate",
+
+        employees.last_working_date
+          AS "lastWorkingDate",
+
+        employees.employment_status_reason
+          AS "employmentStatusReason",
+
+        employees.created_at
+          AS "createdAt",
+
+        employees.updated_at
+          AS "updatedAt",
+
+        positions.id
+          AS "positionId",
+
+        positions.title
+          AS "position",
+
+        departments.id
+          AS "departmentId",
+
+        departments.name
+          AS "department"
+
+      FROM employees
+
+      LEFT JOIN positions
+        ON positions.id =
+          employees.position_id
+
+      LEFT JOIN departments
+        ON departments.id =
+          positions.department_id
+
+      ORDER BY
+        employees.first_name,
+        employees.last_name
+    `,
+  );
 
   return result.rows;
 }
@@ -60,10 +136,7 @@ export async function findById(employeeId) {
   return findEmployeeById(employeeId);
 }
 
-export async function create(
-  employeeData,
-  createdByUserId,
-) {
+export async function create(employeeData, createdByUserId) {
   const client = await pool.connect();
 
   try {
@@ -92,30 +165,24 @@ export async function create(
       [employeeData.positionId],
     );
 
-    const position =
-      positionResult.rows[0];
+    const position = positionResult.rows[0];
 
     if (!position) {
-      const error = new Error(
-        "Selected position does not exist",
-      );
+      const error = new Error("Selected position does not exist");
 
       error.statusCode = 404;
       throw error;
     }
 
     if (!position.isActive) {
-      const error = new Error(
-        "Selected position is inactive",
-      );
+      const error = new Error("Selected position is inactive");
 
       error.statusCode = 409;
       throw error;
     }
 
-    const occupationResult =
-      await client.query(
-        `
+    const occupationResult = await client.query(
+      `
           SELECT
             employee_position_assignments.id,
             employee_position_assignments.employee_id
@@ -140,22 +207,21 @@ export async function create(
               employee_position_assignments.end_date
                 IS NULL
         `,
-        [employeeData.positionId],
-      );
+      [employeeData.positionId],
+    );
 
     if (occupationResult.rows[0]) {
       const error = new Error(
         `The selected position is already occupied by ` +
-        `${occupationResult.rows[0].employeeName}`,
+          `${occupationResult.rows[0].employeeName}`,
       );
 
       error.statusCode = 409;
       throw error;
     }
 
-    const employeeResult =
-      await client.query(
-        `
+    const employeeResult = await client.query(
+      `
           INSERT INTO employees (
             staff_number,
             first_name,
@@ -181,17 +247,16 @@ export async function create(
             updated_at AS "updatedAt",
             position_id AS "positionId"
         `,
-        [
-          employeeData.staffNumber,
-          employeeData.firstName,
-          employeeData.lastName,
-          employeeData.email,
-          employeeData.positionId,
-        ],
-      );
+      [
+        employeeData.staffNumber,
+        employeeData.firstName,
+        employeeData.lastName,
+        employeeData.email,
+        employeeData.positionId,
+      ],
+    );
 
-    const employee =
-      employeeResult.rows[0];
+    const employee = employeeResult.rows[0];
 
     await client.query(
       `
@@ -212,11 +277,7 @@ export async function create(
           'Initial position assigned during employee creation'
         )
       `,
-      [
-        employee.id,
-        employeeData.positionId,
-        createdByUserId,
-      ],
+      [employee.id, employeeData.positionId, createdByUserId],
     );
 
     await client.query("COMMIT");
@@ -270,7 +331,7 @@ export async function update(employeeId, updates) {
           AND is_active = TRUE
         RETURNING id
       `,
-      values
+      values,
     );
 
     if (result.rowCount === 0) {
@@ -278,11 +339,7 @@ export async function update(employeeId, updates) {
       return null;
     }
 
-    const employee = await findEmployeeById(
-      result.rows[0].id,
-      false,
-      client
-    );
+    const employee = await findEmployeeById(result.rows[0].id, false, client);
 
     await client.query("COMMIT");
 
@@ -295,18 +352,14 @@ export async function update(employeeId, updates) {
   }
 }
 
-export async function deactivate(
-  employeeId,
-  endedByUserId,
-) {
+export async function deactivate(employeeId, endedByUserId) {
   const client = await pool.connect();
 
   try {
     await client.query("BEGIN");
 
-    const employeeResult =
-      await client.query(
-        `
+    const employeeResult = await client.query(
+      `
           SELECT
             id,
             staff_number AS "staffNumber",
@@ -322,11 +375,10 @@ export async function deactivate(
 
           FOR UPDATE
         `,
-        [employeeId],
-      );
+      [employeeId],
+    );
 
-    const employee =
-      employeeResult.rows[0];
+    const employee = employeeResult.rows[0];
 
     if (!employee) {
       await client.query("ROLLBACK");
@@ -334,17 +386,14 @@ export async function deactivate(
     }
 
     if (!employee.isActive) {
-      const error = new Error(
-        "Employee is already inactive",
-      );
+      const error = new Error("Employee is already inactive");
 
       error.statusCode = 409;
       throw error;
     }
 
-    const updateResult =
-      await client.query(
-        `
+    const updateResult = await client.query(
+      `
           UPDATE employees
           SET
             is_active = FALSE,
@@ -360,8 +409,8 @@ export async function deactivate(
             position_id AS "positionId",
             updated_at AS "updatedAt"
         `,
-        [employeeId],
-      );
+      [employeeId],
+    );
 
     await client.query(
       `
@@ -383,10 +432,7 @@ export async function deactivate(
         WHERE employee_id = $1
           AND end_date IS NULL
       `,
-      [
-        employeeId,
-        endedByUserId,
-      ],
+      [employeeId, endedByUserId],
     );
 
     await client.query("COMMIT");
@@ -400,10 +446,7 @@ export async function deactivate(
   }
 }
 
-export async function updateEmployeePhoto(
-  employeeId,
-  photoFilename,
-) {
+export async function updateEmployeePhoto(employeeId, photoFilename) {
   const client = await pool.connect();
 
   try {
@@ -451,8 +494,7 @@ export async function updateEmployeePhoto(
 
     return {
       employee: updateResult.rows[0],
-      previousPhotoFilename:
-        existingEmployee.previousPhotoFilename,
+      previousPhotoFilename: existingEmployee.previousPhotoFilename,
     };
   } catch (error) {
     await client.query("ROLLBACK");

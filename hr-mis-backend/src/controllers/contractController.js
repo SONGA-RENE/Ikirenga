@@ -1,6 +1,9 @@
 import {
+  cancelUpcomingContract,
   findAllContracts,
   findContractById,
+  findContractsByEmployeeId,
+  findExpiringContracts,
   findOverlappingContract,
   insertContract,
   renewContract,
@@ -8,6 +11,25 @@ import {
 } from "../services/contractService.js";
 
 const allowedTypes = ["PERMANENT", "FIXED_TERM", "INTERNSHIP"];
+
+function isValidDate(value) {
+  if (
+    typeof value !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(value)
+  ) {
+    return false;
+  }
+
+  const date = new Date(
+    `${value}T00:00:00Z`,
+  );
+
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.toISOString().slice(0, 10) ===
+      value
+  );
+}
 
 
 export async function getAllContracts(request, response, next) {
@@ -55,17 +77,35 @@ export async function getContractById(request, response, next) {
 
 export async function createContract(request, response, next) {
   try {
-      const {
-      employeeId,
-      contractType,
-      startDate,
-      endDate = null,
-    } = request.body;
+    const employeeId = Number(
+        request.body.employeeId,
+      );
 
-    if (!employeeId || !contractType || !startDate) {
+      const contractType =
+        request.body.contractType
+          ?.trim()
+          .toUpperCase();
+
+      const startDate =
+        request.body.startDate?.trim();
+
+      const endDate =
+        typeof request.body.endDate ===
+          "string" &&
+        request.body.endDate.trim()
+          ? request.body.endDate.trim()
+          : null; 
+
+    if (
+      !Number.isInteger(employeeId) ||
+      employeeId <= 0 ||
+      !contractType ||
+      !startDate
+    ) {
       return response.status(400).json({
         success: false,
-        message: "Employee, contract type and start date are required",
+        message:
+          "A valid employee, contract type and start date are required",
       });
     }
 
@@ -76,12 +116,48 @@ export async function createContract(request, response, next) {
       });
     }
 
+      if (
+      !isValidDate(startDate) ||
+      (endDate && !isValidDate(endDate))
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Dates must use a valid YYYY-MM-DD format",
+      });
+    }
+
     if (endDate && new Date(endDate) < new Date(startDate)) {
       return response.status(400).json({
         success: false,
         message: "End date cannot be earlier than start date",
       });
     }
+
+    if (
+      contractType === "PERMANENT" &&
+      endDate
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "A permanent contract must not have an end date",
+      });
+    }
+
+    if (
+      ["FIXED_TERM", "INTERNSHIP"].includes(
+        contractType,
+      ) &&
+      !endDate
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "An end date is required for fixed-term and internship contracts",
+      });
+    }
+
     const overlappingContract = await findOverlappingContract({
       employeeId,
       startDate,
@@ -177,6 +253,30 @@ export async function renewEmployeeContract(request, response, next) {
       });
     }
 
+    if (
+      contractType === "PERMANENT" &&
+      endDate
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "A permanent contract must not have an end date",
+      });
+    }
+
+    if (
+      ["FIXED_TERM", "INTERNSHIP"].includes(
+        contractType,
+      ) &&
+      !endDate
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "An end date is required for fixed-term and internship contracts",
+      });
+    }
+
     const contract = await renewContract(contractId, {
       contractType,
       startDate,
@@ -238,10 +338,11 @@ export async function terminateEmployeeContract(
       });
     }
 
-    const contract = await terminateContract(
+   const contract = await terminateContract(
       contractId,
       terminationDate,
       terminationReason.trim(),
+      request.user.id,
     );
 
     response.status(200).json({
@@ -257,6 +358,170 @@ export async function terminateEmployeeContract(
       });
     }
 
+    next(error);
+  }
+}
+
+export async function getEmployeeContracts(
+  request,
+  response,
+  next,
+) {
+  try {
+    const employeeId = Number(
+      request.params.employeeId,
+    );
+
+    if (
+      !Number.isInteger(employeeId) ||
+      employeeId <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Employee ID must be a positive integer",
+      });
+    }
+
+    const contracts =
+      await findContractsByEmployeeId(
+        employeeId,
+      );
+
+    return response.status(200).json({
+      success: true,
+      count: contracts.length,
+      data: contracts,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function cancelEmployeeContract(
+  request,
+  response,
+  next,
+) {
+  try {
+    const contractId = Number(
+      request.params.id,
+    );
+
+    const cancellationReason =
+      request.body.cancellationReason
+        ?.trim();
+
+    if (
+      !Number.isInteger(contractId) ||
+      contractId <= 0
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Contract ID must be a positive integer",
+      });
+    }
+
+    if (
+      !cancellationReason ||
+      cancellationReason.length < 5
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "Cancellation reason must contain at least 5 characters",
+      });
+    }
+
+    const contract =
+      await cancelUpcomingContract(
+        contractId,
+        request.user.id,
+        cancellationReason,
+      );
+
+    return response.status(200).json({
+      success: true,
+      message:
+        "Upcoming contract cancelled successfully",
+      data: contract,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return response
+        .status(error.statusCode)
+        .json({
+          success: false,
+          message: error.message,
+        });
+    }
+
+    next(error);
+  }
+}
+export async function getExpiringContracts(
+  request,
+  response,
+  next,
+) {
+  try {
+    const requestedDays =
+      request.query.days == null
+        ? 90
+        : Number(request.query.days);
+
+    if (
+      !Number.isInteger(requestedDays) ||
+      requestedDays < 1 ||
+      requestedDays > 365
+    ) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "days must be an integer between 1 and 365",
+      });
+    }
+
+    const contracts =
+      await findExpiringContracts(
+        requestedDays,
+      );
+
+    const summary = contracts.reduce(
+      (result, contract) => {
+        if (
+          contract.severity ===
+          "CRITICAL"
+        ) {
+          result.critical += 1;
+        } else if (
+          contract.severity ===
+          "WARNING"
+        ) {
+          result.warning += 1;
+        } else {
+          result.notice += 1;
+        }
+
+        return result;
+      },
+      {
+        critical: 0,
+        warning: 0,
+        notice: 0,
+      },
+    );
+
+    return response.status(200).json({
+      success: true,
+      filters: {
+        days: requestedDays,
+      },
+      count: contracts.length,
+      summary,
+      data: contracts,
+    });
+  } catch (error) {
     next(error);
   }
 }

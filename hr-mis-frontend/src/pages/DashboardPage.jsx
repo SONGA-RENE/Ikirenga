@@ -10,6 +10,9 @@ import { Link } from "react-router-dom";
 
 import { useAuth } from "../auth/AuthContext.jsx";
 
+import ContractExpiryPanel from
+  "./contracts/ContractExpiryPanel.jsx";
+
 const modules = [
   {
     title: "Employees",
@@ -24,7 +27,8 @@ const modules = [
     description:
       "Monitor employment contracts and expiry dates.",
     icon: FileText,
-    enabled: false,
+    path: "/contracts",
+    enabled: true,
   },
   {
     title: "Leave",
@@ -126,6 +130,11 @@ function DashboardPage() {
           );
         })}
       </section>
+        {["ADMIN", "HR"].includes(
+      user.role,
+    ) && (
+      <ContractExpiryPanel />
+    )}
     </>
   );
 }

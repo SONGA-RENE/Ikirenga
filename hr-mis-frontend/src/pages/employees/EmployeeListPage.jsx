@@ -1,5 +1,6 @@
 import { Link } from "react-router-dom";
 import {
+  Activity,
   AlertCircle,
   Plus,
   RefreshCw,
@@ -7,28 +8,16 @@ import {
   Users,
 } from "lucide-react";
 
-import {
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { useAuth } from
-  "../../auth/AuthContext.jsx";
+import { useAuth } from "../../auth/AuthContext.jsx";
 
-import { getEmployees } from
-  "../../api/employeeApi.js";
+import { getEmployees } from "../../api/employeeApi.js";
 
-
-
-const apiBaseUrl =
-  import.meta.env.VITE_API_BASE_URL;
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL;
 
 function getEmployeeInitials(employee) {
-  return [
-    employee.firstName,
-    employee.lastName,
-  ]
+  return [employee.firstName, employee.lastName]
     .filter(Boolean)
     .map((name) => name[0])
     .slice(0, 2)
@@ -42,28 +31,29 @@ function getEmployeePhotoUrl(employee) {
   }
 
   return `${apiBaseUrl}/uploads/employees/${encodeURIComponent(
-  employee.photoFilename,
-)}`;
+    employee.photoFilename,
+  )}`;
 }
+
+const employmentStatusLabels = {
+  ACTIVE: "Active",
+  ON_NOTICE: "On notice",
+  SUSPENDED: "Suspended",
+  EXITED: "Exited",
+};
 
 function EmployeeListPage() {
   const { user } = useAuth();
 
-  const [employees, setEmployees] =
-    useState([]);
+  const [employees, setEmployees] = useState([]);
 
-  const [searchTerm, setSearchTerm] =
-    useState("");
+  const [searchTerm, setSearchTerm] = useState("");
 
-  const [isLoading, setIsLoading] =
-    useState(true);
+  const [isLoading, setIsLoading] = useState(true);
 
   const [error, setError] = useState("");
 
-  const canManageEmployees = [
-    "ADMIN",
-    "HR",
-  ].includes(user.role);
+  const canManageEmployees = ["ADMIN", "HR"].includes(user.role);
 
   async function loadEmployees(signal) {
     setIsLoading(true);
@@ -96,8 +86,7 @@ function EmployeeListPage() {
   }
 
   useEffect(() => {
-    const controller =
-      new AbortController();
+    const controller = new AbortController();
 
     loadEmployees(controller.signal);
 
@@ -107,8 +96,7 @@ function EmployeeListPage() {
   }, []);
 
   const filteredEmployees = useMemo(() => {
-    const normalizedSearch =
-      searchTerm.trim().toLowerCase();
+    const normalizedSearch = searchTerm.trim().toLowerCase();
 
     if (!normalizedSearch) {
       return employees;
@@ -136,27 +124,37 @@ function EmployeeListPage() {
     <>
       <header className="page-header">
         <div>
-          <p className="eyebrow">
-            Employee management
-          </p>
+          <p className="eyebrow">Employee management</p>
 
           <h1>Employees</h1>
 
           <p>
-            View and manage PSF employee
-            records and organizational
-            assignments.
+            View and manage PSF employee records and organizational assignments.
           </p>
         </div>
 
         {canManageEmployees && (
-          <Link
-            to="/employees/new"
-            className="page-primary-action"
-          >
-            <Plus size={19} />
-            Add employee
-          </Link>
+          <div className="page-header-actions">
+            <Link
+              to="/employees/lifecycle"
+              className="lifecycle-dashboard-link"
+            >
+              <span className="lifecycle-link-icon">
+                <Activity size={19} />
+              </span>
+
+              <span>
+                <strong>Lifecycle dashboard</strong>
+
+                <small>Notices, exits and compliance</small>
+              </span>
+            </Link>
+
+            <Link to="/employees/new" className="page-primary-action">
+              <Plus size={19} />
+              Add employee
+            </Link>
+          </div>
         )}
       </header>
 
@@ -168,11 +166,7 @@ function EmployeeListPage() {
             <input
               type="search"
               value={searchTerm}
-              onChange={(event) =>
-                setSearchTerm(
-                  event.target.value,
-                )
-              }
+              onChange={(event) => setSearchTerm(event.target.value)}
               placeholder="Search by name, staff number, position or department"
               aria-label="Search employees"
             />
@@ -183,13 +177,8 @@ function EmployeeListPage() {
 
             <span>
               {filteredEmployees.length}
-              {searchTerm
-                ? ` of ${employees.length}`
-                : ""}{" "}
-              employee
-              {filteredEmployees.length === 1
-                ? ""
-                : "s"}
+              {searchTerm ? ` of ${employees.length}` : ""} employee
+              {filteredEmployees.length === 1 ? "" : "s"}
             </span>
           </div>
         </div>
@@ -208,18 +197,14 @@ function EmployeeListPage() {
               <AlertCircle size={26} />
             </div>
 
-            <h2>
-              Employees could not be loaded
-            </h2>
+            <h2>Employees could not be loaded</h2>
 
             <p>{error}</p>
 
             <button
               type="button"
               className="retry-button"
-              onClick={() =>
-                loadEmployees()
-              }
+              onClick={() => loadEmployees()}
             >
               <RefreshCw size={17} />
               Try again
@@ -227,156 +212,120 @@ function EmployeeListPage() {
           </div>
         )}
 
-        {!isLoading &&
-          !error &&
-          filteredEmployees.length === 0 && (
-            <div className="empty-state">
-              <div className="empty-state-icon">
-                <Users size={28} />
-              </div>
-
-              <h2>
-                {searchTerm
-                  ? "No matching employees"
-                  : "No employees found"}
-              </h2>
-
-              <p>
-                {searchTerm
-                  ? "Try a different name, staff number, position or department."
-                  : "Employee records will appear here after they are created."}
-              </p>
+        {!isLoading && !error && filteredEmployees.length === 0 && (
+          <div className="empty-state">
+            <div className="empty-state-icon">
+              <Users size={28} />
             </div>
-          )}
 
-        {!isLoading &&
-          !error &&
-          filteredEmployees.length > 0 && (
-            <div className="table-container">
-              <table className="employee-table">
-                <thead>
-                  <tr>
-                    <th>Employee</th>
-                    <th>Staff number</th>
-                    <th>Position</th>
-                    <th>Department</th>
-                    <th>Status</th>
-                    <th>
-                      <span className="sr-only">
-                        Actions
-                      </span>
-                    </th>
-                  </tr>
-                </thead>
+            <h2>
+              {searchTerm ? "No matching employees" : "No employees found"}
+            </h2>
 
-                <tbody>
-                  {filteredEmployees.map(
-                    (employee) => {
-                      const photoUrl =
-                        getEmployeePhotoUrl(
-                          employee,
-                        );
+            <p>
+              {searchTerm
+                ? "Try a different name, staff number, position or department."
+                : "Employee records will appear here after they are created."}
+            </p>
+          </div>
+        )}
 
-                      return (
-                        <tr key={employee.id}>
-                          <td>
-                            <div className="employee-cell">
-                              <div className="employee-photo">
-                                {photoUrl ? (
-                                  <img
-                                    src={photoUrl}
-                                    alt=""
-                                    onError={(
-                                      event,
-                                    ) => {
-                                      event.currentTarget.style.display =
-                                        "none";
+        {!isLoading && !error && filteredEmployees.length > 0 && (
+          <div className="table-container">
+            <table className="employee-table">
+              <thead>
+                <tr>
+                  <th>Employee</th>
+                  <th>Staff number</th>
+                  <th>Position</th>
+                  <th>Department</th>
+                  <th>Status</th>
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
+                </tr>
+              </thead>
 
-                                      event.currentTarget
-                                        .nextElementSibling
-                                        ?.removeAttribute(
-                                          "hidden",
-                                        );
-                                    }}
-                                  />
-                                ) : null}
+              <tbody>
+                {filteredEmployees.map((employee) => {
+                  const photoUrl = getEmployeePhotoUrl(employee);
 
-                                <span
-                                  hidden={
-                                    Boolean(photoUrl)
-                                  }
-                                >
-                                  {getEmployeeInitials(
-                                    employee,
-                                  )}
-                                </span>
-                              </div>
+                  const employmentStatus =
+                    employee.employmentStatus ||
+                    (employee.isActive ? "ACTIVE" : "EXITED");
 
-                              <div className="employee-identity">
-                                <strong>
-                                  {
-                                    employee.firstName
-                                  }{" "}
-                                  {
-                                    employee.lastName
-                                  }
-                                </strong>
+                  const employmentStatusClass = employmentStatus
+                    .toLowerCase()
+                    .replaceAll("_", "-");
 
-                                <span>
-                                  {employee.email}
-                                </span>
-                              </div>
-                            </div>
-                          </td>
+                  return (
+                    <tr key={employee.id}>
+                      <td>
+                        <div className="employee-cell">
+                          <div className="employee-photo">
+                            {photoUrl ? (
+                              <img
+                                src={photoUrl}
+                                alt=""
+                                onError={(event) => {
+                                  event.currentTarget.style.display = "none";
 
-                          <td>
-                            <span className="staff-number">
-                              {
-                                employee.staffNumber
-                              }
+                                  event.currentTarget.nextElementSibling?.removeAttribute(
+                                    "hidden",
+                                  );
+                                }}
+                              />
+                            ) : null}
+
+                            <span hidden={Boolean(photoUrl)}>
+                              {getEmployeeInitials(employee)}
                             </span>
-                          </td>
+                          </div>
 
-                          <td>
-                            {employee.position ||
-                              "Not assigned"}
-                          </td>
+                          <div className="employee-identity">
+                            <strong>
+                              {employee.firstName} {employee.lastName}
+                            </strong>
 
-                          <td>
-                            {employee.department ||
-                              "Not assigned"}
-                          </td>
+                            <span>{employee.email}</span>
+                          </div>
+                        </div>
+                      </td>
 
-                          <td>
-                            <span
-                              className={`status-badge ${
-                                employee.isActive
-                                  ? "status-active"
-                                  : "status-inactive"
-                              }`}
-                            >
-                              {employee.isActive
-                                ? "Active"
-                                : "Inactive"}
-                            </span>
-                          </td>
+                      <td>
+                        <span className="staff-number">
+                          {employee.staffNumber}
+                        </span>
+                      </td>
 
-                          <td className="table-actions">
-                           <Link
-                            to={`/employees/${employee.id}`}
-                            className="table-action-button"
-                            >
-                            View
-                            </Link>
-                          </td>
-                        </tr>
-                      );
-                    },
-                  )}
-                </tbody>
-              </table>
-            </div>
-          )}
+                      <td>{employee.position || "Not assigned"}</td>
+
+                      <td>{employee.department || "Not assigned"}</td>
+
+                      <td>
+                        <span
+                          className={`status-badge status-${employmentStatusClass}`}
+                        >
+                          {employmentStatusLabels[employmentStatus] ||
+                            employmentStatus}
+                        </span>
+                      </td>
+
+                      <td className="table-actions">
+                        <Link
+                          to={`/employees/${employee.id}`}
+                          className="table-action-button"
+                        >
+                          View
+                        </Link>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
     </>
   );
