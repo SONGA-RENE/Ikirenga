@@ -53,7 +53,7 @@ import { uploadEmployeePhoto } from "../middleware/employeePhotoMiddleware.js";
 import { authenticate } from "../middleware/authMiddleware.js";
 
 import { authorizeRoles } from "../middleware/roleMiddleware.js";
-
+import { updateEmployeeServiceStartDate } from "../controllers/employeeController.js";
 const router = express.Router();
 
 router.use(authenticate, authorizeRoles("ADMIN", "HR"));
@@ -124,6 +124,8 @@ router.patch(
   "/:employeeId/separations/:separationId/complete",
   completeSeparation,
 );
+
+router.patch("/:employeeId/service-start-date", updateEmployeeServiceStartDate);
 
 router.patch("/:id", updateEmployee);
 

@@ -503,3 +503,124 @@ export async function updateEmployeePhoto(employeeId, photoFilename) {
     client.release();
   }
 }
+export async function verifyEmployeeServiceStartDate(
+  employeeId,
+  { continuousServiceStartDate, changeReason },
+  changedByUserId,
+) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const employeeResult = await client.query(
+      `
+        SELECT
+          id,
+          staff_number AS "staffNumber",
+          first_name AS "firstName",
+          last_name AS "lastName",
+          continuous_service_start_date
+            AS "continuousServiceStartDate",
+          service_start_date_verified
+            AS "serviceStartDateVerified"
+        FROM employees
+        WHERE id = $1
+        FOR UPDATE
+      `,
+      [employeeId],
+    );
+
+    const employee = employeeResult.rows[0];
+
+    if (!employee) {
+      const error = new Error("Employee not found");
+
+      error.statusCode = 404;
+      throw error;
+    }
+
+    const dateResult = await client.query(
+      `
+        SELECT
+          CURRENT_DATE::text AS "today",
+          ($1::date + INTERVAL '1 year')::date::text
+            AS "annualLeaveEligibleFrom"
+      `,
+      [continuousServiceStartDate],
+    );
+
+    const { today, annualLeaveEligibleFrom } = dateResult.rows[0];
+
+    if (continuousServiceStartDate > today) {
+      const error = new Error(
+        "Continuous service start date cannot be in the future",
+      );
+
+      error.statusCode = 400;
+      throw error;
+    }
+
+    await client.query(
+      `
+        INSERT INTO employee_service_date_history (
+          employee_id,
+          previous_service_start_date,
+          new_service_start_date,
+          previous_verified,
+          change_reason,
+          changed_by_user_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+      `,
+      [
+        employeeId,
+        employee.continuousServiceStartDate,
+        continuousServiceStartDate,
+        employee.serviceStartDateVerified,
+        changeReason,
+        changedByUserId,
+      ],
+    );
+
+    const updateResult = await client.query(
+      `
+        UPDATE employees
+        SET
+          continuous_service_start_date = $2,
+          service_start_date_verified = TRUE,
+          service_start_date_updated_at =
+            CURRENT_TIMESTAMP,
+          service_start_date_updated_by_user_id = $3,
+          updated_at = CURRENT_TIMESTAMP
+        WHERE id = $1
+        RETURNING
+          id,
+          staff_number AS "staffNumber",
+          first_name AS "firstName",
+          last_name AS "lastName",
+          continuous_service_start_date
+            AS "continuousServiceStartDate",
+          service_start_date_verified
+            AS "serviceStartDateVerified",
+          service_start_date_updated_at
+            AS "serviceStartDateUpdatedAt",
+          service_start_date_updated_by_user_id
+            AS "serviceStartDateUpdatedByUserId"
+      `,
+      [employeeId, continuousServiceStartDate, changedByUserId],
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      ...updateResult.rows[0],
+      annualLeaveEligibleFrom,
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}

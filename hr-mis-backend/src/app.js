@@ -14,8 +14,8 @@ import staffCardRoutes from "./routes/staffCardRoutes.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import publicStaffCardRoutes from "./routes/publicStaffCardRoutes.js";
 import missionRoutes from "./routes/missionRoutes.js";
-import positionRoutes from
-  "./routes/positionRoutes.js";
+import positionRoutes from "./routes/positionRoutes.js";
+import leaveEntitlementRoutes from "./routes/leaveEntitlementRoutes.js";
 const app = express();
 import cors from "cors";
 
@@ -26,34 +26,18 @@ const currentDirectory = path.dirname(currentFilePath);
 app.use(
   cors({
     origin: "http://localhost:5173",
-    methods: [
-      "GET",
-      "POST",
-      "PATCH",
-      "PUT",
-      "DELETE",
-      "OPTIONS",
-    ],
-    allowedHeaders: [
-      "Content-Type",
-      "Authorization",
-    ],
+    methods: ["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   }),
 );
 
 app.use(express.json());
 
 // Serve public assets such as the logo and signature
-app.use(
-  "/public",
-  express.static(path.join(currentDirectory, "../public")),
-);
+app.use("/public", express.static(path.join(currentDirectory, "../public")));
 
 // Serve uploaded employee files
-app.use(
-  "/uploads",
-  express.static(path.join(currentDirectory, "../uploads")),
-);
+app.use("/uploads", express.static(path.join(currentDirectory, "../uploads")));
 
 app.get("/", (request, response) => {
   response.status(200).json({
@@ -68,18 +52,13 @@ app.use("/api/leave-types", leaveTypeRoutes);
 app.use("/api/public-holidays", publicHolidayRoutes);
 app.use("/api/leave-requests", leaveRequestRoutes);
 app.use("/api/leave-balances", leaveBalanceRoutes);
-app.use(
-  "/staff-cards",
-  publicStaffCardRoutes,
-);
+app.use("/staff-cards", publicStaffCardRoutes);
 app.use("/api/staff-cards", staffCardRoutes);
 app.use("/api/me", selfServiceRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/missions", missionRoutes);
-app.use(
-  "/api/positions",
-  positionRoutes,
-);
+app.use("/api/positions", positionRoutes);
+app.use("/api/leave-entitlements", leaveEntitlementRoutes);
 // Handle unknown endpoints
 app.use((request, response) => {
   response.status(404).json({

@@ -1,19 +1,58 @@
 import pool from "../config/database.js";
 
-export async function findAllLeaveTypes() {
-  const result = await pool.query(`
-    SELECT
-      id,
-      code,
-      name,
-      annual_entitlement AS "annualEntitlement",
-      is_paid AS "isPaid",
-      requires_attachment AS "requiresAttachment",
-      is_active AS "isActive",
-      created_at AS "createdAt"
-    FROM leave_types
-    ORDER BY name ASC
-  `);
+const leaveTypeSelect = `
+  SELECT
+    id,
+    code,
+    name,
+
+    annual_entitlement
+      AS "annualEntitlement",
+
+    is_paid
+      AS "isPaid",
+
+    requires_attachment
+      AS "requiresAttachment",
+
+    entitlement_mode
+      AS "entitlementMode",
+
+    duration_value
+      AS "durationValue",
+
+    duration_unit
+      AS "durationUnit",
+
+    eligible_gender
+      AS "eligibleGender",
+
+    carry_forward_years
+      AS "carryForwardYears",
+
+    is_active
+      AS "isActive",
+
+    created_at
+      AS "createdAt"
+
+  FROM leave_types
+`;
+
+export async function findAllLeaveTypes({ activeOnly = false } = {}) {
+  const result = await pool.query(
+    `
+      ${leaveTypeSelect}
+
+      WHERE (
+        $1::boolean = FALSE
+        OR is_active = TRUE
+      )
+
+      ORDER BY name ASC
+    `,
+    [activeOnly],
+  );
 
   return result.rows;
 }
@@ -21,22 +60,13 @@ export async function findAllLeaveTypes() {
 export async function findLeaveTypeById(id) {
   const result = await pool.query(
     `
-      SELECT
-        id,
-        code,
-        name,
-        annual_entitlement AS "annualEntitlement",
-        is_paid AS "isPaid",
-        requires_attachment AS "requiresAttachment",
-        is_active AS "isActive",
-        created_at AS "createdAt"
-      FROM leave_types
+      ${leaveTypeSelect}
       WHERE id = $1
     `,
     [id],
   );
 
-  return result.rows[0];
+  return result.rows[0] || null;
 }
 
 export async function insertLeaveType(leaveType) {
@@ -46,6 +76,11 @@ export async function insertLeaveType(leaveType) {
     annualEntitlement,
     isPaid,
     requiresAttachment,
+    entitlementMode,
+    durationValue,
+    durationUnit,
+    eligibleGender,
+    carryForwardYears,
   } = leaveType;
 
   const result = await pool.query(
@@ -55,18 +90,59 @@ export async function insertLeaveType(leaveType) {
         name,
         annual_entitlement,
         is_paid,
-        requires_attachment
+        requires_attachment,
+        entitlement_mode,
+        duration_value,
+        duration_unit,
+        eligible_gender,
+        carry_forward_years
       )
-      VALUES ($1, $2, $3, $4, $5)
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        $8,
+        $9,
+        $10
+      )
       RETURNING
         id,
         code,
         name,
-        annual_entitlement AS "annualEntitlement",
-        is_paid AS "isPaid",
-        requires_attachment AS "requiresAttachment",
-        is_active AS "isActive",
-        created_at AS "createdAt"
+
+        annual_entitlement
+          AS "annualEntitlement",
+
+        is_paid
+          AS "isPaid",
+
+        requires_attachment
+          AS "requiresAttachment",
+
+        entitlement_mode
+          AS "entitlementMode",
+
+        duration_value
+          AS "durationValue",
+
+        duration_unit
+          AS "durationUnit",
+
+        eligible_gender
+          AS "eligibleGender",
+
+        carry_forward_years
+          AS "carryForwardYears",
+
+        is_active
+          AS "isActive",
+
+        created_at
+          AS "createdAt"
     `,
     [
       code,
@@ -74,6 +150,11 @@ export async function insertLeaveType(leaveType) {
       annualEntitlement,
       isPaid,
       requiresAttachment,
+      entitlementMode,
+      durationValue,
+      durationUnit,
+      eligibleGender,
+      carryForwardYears,
     ],
   );
 

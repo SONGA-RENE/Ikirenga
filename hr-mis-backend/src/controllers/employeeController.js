@@ -1,8 +1,9 @@
 import * as employeeService from "../services/employeeService.js";
-import { updateEmployeePhoto } from "../services/employeeService.js";
 import {
-  deleteEmployeePhoto,
-} from "../utils/employeePhotoUtils.js";
+  updateEmployeePhoto,
+  verifyEmployeeServiceStartDate,
+} from "../services/employeeService.js";
+import { deleteEmployeePhoto } from "../utils/employeePhotoUtils.js";
 
 const allowedFields = [
   "staffNumber",
@@ -11,6 +12,18 @@ const allowedFields = [
   "email",
   "positionId",
 ];
+
+function isValidISODate(value) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+
+  const date = new Date(`${value}T00:00:00Z`);
+
+  return (
+    !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value
+  );
+}
 
 function parseEmployeeId(value) {
   const employeeId = Number(value);
@@ -106,9 +119,7 @@ export async function createEmployee(request, response, next) {
   ];
 
   const hasInvalidText = requiredTextFields.some(
-    (value) =>
-      typeof value !== "string" ||
-      value.trim() === ""
+    (value) => typeof value !== "string" || value.trim() === "",
   );
 
   const hasInvalidPosition =
@@ -125,8 +136,7 @@ export async function createEmployee(request, response, next) {
   try {
     const normalizedData = normalizeEmployeeData(submittedData);
 
-   const employee =
-    await employeeService.create(
+    const employee = await employeeService.create(
       normalizedData,
       request.user.id,
     );
@@ -141,77 +151,53 @@ export async function createEmployee(request, response, next) {
   }
 }
 
-export async function updateEmployee(
-  request,
-  response,
-  next,
-) {
-  const employeeId = parseEmployeeId(
-    request.params.id,
-  );
+export async function updateEmployee(request, response, next) {
+  const employeeId = parseEmployeeId(request.params.id);
 
   if (!employeeId) {
     return response.status(400).json({
       success: false,
-      message:
-        "Employee ID must be a positive number",
+      message: "Employee ID must be a positive number",
     });
   }
 
-  const submittedFields = Object.keys(
-    request.body,
-  );
+  const submittedFields = Object.keys(request.body);
 
   if (submittedFields.length === 0) {
     return response.status(400).json({
       success: false,
-      message:
-        "Provide at least one field to update",
+      message: "Provide at least one field to update",
     });
   }
 
-  const invalidFields =
-    submittedFields.filter(
-      (field) =>
-        !allowedFields.includes(field),
-    );
+  const invalidFields = submittedFields.filter(
+    (field) => !allowedFields.includes(field),
+  );
 
   if (invalidFields.length > 0) {
     return response.status(400).json({
       success: false,
-      message:
-        `These fields cannot be updated: ` +
-        invalidFields.join(", "),
+      message: `These fields cannot be updated: ` + invalidFields.join(", "),
     });
   }
 
-  const hasInvalidValue =
-    submittedFields.some(
-      (field) =>
-        typeof request.body[field] !==
-          "string" ||
-        request.body[field].trim() === "",
-    );
+  const hasInvalidValue = submittedFields.some(
+    (field) =>
+      typeof request.body[field] !== "string" ||
+      request.body[field].trim() === "",
+  );
 
   if (hasInvalidValue) {
     return response.status(400).json({
       success: false,
-      message:
-        "Submitted employee fields cannot be empty",
+      message: "Submitted employee fields cannot be empty",
     });
   }
 
   try {
-    const normalizedData =
-      normalizeEmployeeData(
-        request.body,
-      );
+    const normalizedData = normalizeEmployeeData(request.body);
 
-    const employee =
-      await employeeService.update(
-        employeeId,
-        normalizedData,
-      );
+    const employee = await employeeService.update(employeeId, normalizedData);
 
     if (!employee) {
       return response.status(404).json({
@@ -222,8 +208,7 @@ export async function updateEmployee(
 
     return response.status(200).json({
       success: true,
-      message:
-        "Employee updated successfully",
+      message: "Employee updated successfully",
       data: employee,
     });
   } catch (error) {
@@ -242,11 +227,10 @@ export async function deactivateEmployee(request, response, next) {
   }
 
   try {
-    const employee =
-      await employeeService.deactivate(
-        employeeId,
-        request.user.id,
-      );
+    const employee = await employeeService.deactivate(
+      employeeId,
+      request.user.id,
+    );
 
     if (!employee) {
       return response.status(404).json({
@@ -265,28 +249,20 @@ export async function deactivateEmployee(request, response, next) {
   }
 }
 
-export async function uploadPhoto(
-  request,
-  response,
-  next,
-) {
+export async function uploadPhoto(request, response, next) {
   const uploadedFilename = request.file?.filename;
 
   try {
     const employeeId = Number(request.params.id);
 
-    if (
-      !Number.isInteger(employeeId) ||
-      employeeId <= 0
-    ) {
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
       if (uploadedFilename) {
         await deleteEmployeePhoto(uploadedFilename);
       }
 
       return response.status(400).json({
         success: false,
-        message:
-          "Employee ID must be a positive integer",
+        message: "Employee ID must be a positive integer",
       });
     }
 
@@ -297,10 +273,7 @@ export async function uploadPhoto(
       });
     }
 
-    const result = await updateEmployeePhoto(
-      employeeId,
-      uploadedFilename,
-    );
+    const result = await updateEmployeePhoto(employeeId, uploadedFilename);
 
     if (!result) {
       await deleteEmployeePhoto(uploadedFilename);
@@ -311,19 +284,11 @@ export async function uploadPhoto(
       });
     }
 
-    const {
-      employee,
-      previousPhotoFilename,
-    } = result;
+    const { employee, previousPhotoFilename } = result;
 
-    if (
-      previousPhotoFilename &&
-      previousPhotoFilename !== uploadedFilename
-    ) {
+    if (previousPhotoFilename && previousPhotoFilename !== uploadedFilename) {
       try {
-        await deleteEmployeePhoto(
-          previousPhotoFilename,
-        );
+        await deleteEmployeePhoto(previousPhotoFilename);
       } catch (cleanupError) {
         console.error(
           "Unable to delete previous employee photo:",
@@ -339,8 +304,7 @@ export async function uploadPhoto(
         : "Employee photo uploaded successfully",
       data: {
         ...employee,
-        photoUrl:
-          `/uploads/employees/${employee.photoFilename}`,
+        photoUrl: `/uploads/employees/${employee.photoFilename}`,
       },
     });
   } catch (error) {
@@ -348,11 +312,63 @@ export async function uploadPhoto(
       try {
         await deleteEmployeePhoto(uploadedFilename);
       } catch (cleanupError) {
-        console.error(
-          "Unable to clean up failed photo upload:",
-          cleanupError,
-        );
+        console.error("Unable to clean up failed photo upload:", cleanupError);
       }
+    }
+
+    next(error);
+  }
+}
+export async function updateEmployeeServiceStartDate(request, response, next) {
+  try {
+    const employeeId = Number(request.params.employeeId);
+
+    const continuousServiceStartDate = request.body.continuousServiceStartDate;
+
+    const changeReason = request.body.changeReason?.trim();
+
+    if (!Number.isInteger(employeeId) || employeeId <= 0) {
+      return response.status(400).json({
+        success: false,
+        message: "Employee ID must be a positive integer",
+      });
+    }
+
+    if (!isValidISODate(continuousServiceStartDate)) {
+      return response.status(400).json({
+        success: false,
+        message: "Continuous service start date must use YYYY-MM-DD format",
+      });
+    }
+
+    if (!changeReason || changeReason.length < 5) {
+      return response.status(400).json({
+        success: false,
+        message:
+          "A verification or correction reason of at least 5 characters is required",
+      });
+    }
+
+    const employee = await verifyEmployeeServiceStartDate(
+      employeeId,
+      {
+        continuousServiceStartDate,
+        changeReason,
+      },
+      request.user.id,
+    );
+
+    return response.status(200).json({
+      success: true,
+      message: "Continuous service start date verified successfully",
+      data: employee,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return response.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
     }
 
     next(error);

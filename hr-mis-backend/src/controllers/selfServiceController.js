@@ -1,6 +1,4 @@
-import {
-  findEmployeeLeaveBalances,
-} from "../services/leaveRequestService.js";
+import { findEmployeeLeaveBalances } from "../services/leaveEntitlementService.js";
 
 import {
   findMyContracts,
@@ -14,8 +12,7 @@ function getLinkedEmployeeId(request, response) {
   if (!employeeId) {
     response.status(403).json({
       success: false,
-      message:
-        "Your user account is not linked to an employee record",
+      message: "Your user account is not linked to an employee record",
     });
 
     return null;
@@ -24,23 +21,15 @@ function getLinkedEmployeeId(request, response) {
   return employeeId;
 }
 
-export async function getMyProfile(
-  request,
-  response,
-  next,
-) {
+export async function getMyProfile(request, response, next) {
   try {
-    const employeeId = getLinkedEmployeeId(
-      request,
-      response,
-    );
+    const employeeId = getLinkedEmployeeId(request, response);
 
     if (!employeeId) {
       return;
     }
 
-    const profile =
-      await findMyEmployeeProfile(employeeId);
+    const profile = await findMyEmployeeProfile(employeeId);
 
     if (!profile) {
       return response.status(404).json({
@@ -49,7 +38,7 @@ export async function getMyProfile(
       });
     }
 
-   response.status(200).json({
+    response.status(200).json({
       success: true,
       data: {
         ...profile,
@@ -63,16 +52,9 @@ export async function getMyProfile(
   }
 }
 
-export async function getMyContracts(
-  request,
-  response,
-  next,
-) {
+export async function getMyContracts(request, response, next) {
   try {
-    const employeeId = getLinkedEmployeeId(
-      request,
-      response,
-    );
+    const employeeId = getLinkedEmployeeId(request, response);
 
     if (!employeeId) {
       return;
@@ -90,23 +72,15 @@ export async function getMyContracts(
   }
 }
 
-export async function getMyLeaveRequests(
-  request,
-  response,
-  next,
-) {
+export async function getMyLeaveRequests(request, response, next) {
   try {
-    const employeeId = getLinkedEmployeeId(
-      request,
-      response,
-    );
+    const employeeId = getLinkedEmployeeId(request, response);
 
     if (!employeeId) {
       return;
     }
 
-    const leaveRequests =
-      await findMyLeaveRequests(employeeId);
+    const leaveRequests = await findMyLeaveRequests(employeeId);
 
     response.status(200).json({
       success: true,
@@ -118,16 +92,9 @@ export async function getMyLeaveRequests(
   }
 }
 
-export async function getMyLeaveBalances(
-  request,
-  response,
-  next,
-) {
+export async function getMyLeaveBalances(request, response, next) {
   try {
-    const employeeId = getLinkedEmployeeId(
-      request,
-      response,
-    );
+    const employeeId = getLinkedEmployeeId(request, response);
 
     if (!employeeId) {
       return;
@@ -135,22 +102,14 @@ export async function getMyLeaveBalances(
 
     const year = Number(request.query.year);
 
-    if (
-      !Number.isInteger(year) ||
-      year < 2000 ||
-      year > 2100
-    ) {
+    if (!Number.isInteger(year) || year < 2000 || year > 2100) {
       return response.status(400).json({
         success: false,
-        message:
-          "A valid year between 2000 and 2100 is required",
+        message: "A valid year between 2000 and 2100 is required",
       });
     }
 
-    const balances = await findEmployeeLeaveBalances(
-      employeeId,
-      year,
-    );
+    const balances = await findEmployeeLeaveBalances(employeeId, year);
 
     response.status(200).json({
       success: true,
