@@ -27,6 +27,8 @@ export async function createLeaveEntitlement(request, response, next) {
 
     const grantNote = request.body.grantNote?.trim();
 
+    const availableFrom = request.body.availableFrom;
+
     if (
       !Number.isInteger(employeeId) ||
       employeeId <= 0 ||
@@ -43,6 +45,20 @@ export async function createLeaveEntitlement(request, response, next) {
       return response.status(400).json({
         success: false,
         message: "Leave year must be between 2000 and 2100",
+      });
+    }
+
+    if (!isValidISODate(availableFrom)) {
+      return response.status(400).json({
+        success: false,
+        message: "Available-from date must use YYYY-MM-DD format",
+      });
+    }
+
+    if (Number(availableFrom.slice(0, 4)) !== leaveYear) {
+      return response.status(400).json({
+        success: false,
+        message: "Available-from date must fall within the entitlement year",
       });
     }
 
@@ -66,6 +82,7 @@ export async function createLeaveEntitlement(request, response, next) {
         leaveTypeId,
         leaveYear,
         entitledDays,
+        availableFrom,
         grantNote,
       },
       request.user.id,

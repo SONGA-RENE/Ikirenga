@@ -443,7 +443,14 @@ export async function findLeaveRequestById(id) {
 }
 
 export async function insertLeaveRequest(leaveRequest, submittedByUserId) {
-  const { employeeId, leaveTypeId, startDate, endDate, reason } = leaveRequest;
+  const {
+    employeeId,
+    leaveTypeId,
+    startDate,
+    endDate,
+    reason,
+    attachment = null,
+  } = leaveRequest;
 
   const client = await pool.connect();
 
@@ -603,7 +610,47 @@ export async function insertLeaveRequest(leaveRequest, submittedByUserId) {
     if (startDate < employee.today) {
       throw createServiceError("Leave start date cannot be in the past", 400);
     }
+    const startDateAvailabilityResult = await client.query(
+      `
+      SELECT
+        EXTRACT(
+          ISODOW FROM $1::date
+        )::integer
+          AS "isoWeekday",
 
+        holidays.id
+          AS "holidayId",
+
+        holidays.name
+          AS "holidayName"
+
+      FROM (
+        SELECT $1::date AS requested_date
+      ) AS requested
+
+      LEFT JOIN public_holidays
+        AS holidays
+        ON holidays.holiday_date =
+          requested.requested_date
+    `,
+      [startDate],
+    );
+
+    const startDateAvailability = startDateAvailabilityResult.rows[0];
+
+    if ([6, 7].includes(startDateAvailability.isoWeekday)) {
+      throw createServiceError(
+        "Leave must start on a working day. The selected start date falls on a weekend.",
+        400,
+      );
+    }
+
+    if (startDateAvailability.holidayId) {
+      throw createServiceError(
+        `Leave must start on a working day. ${startDateAvailability.holidayName} is a public holiday.`,
+        400,
+      );
+    }
     const leaveTypeResult = await client.query(
       `
       SELECT
@@ -644,7 +691,53 @@ export async function insertLeaveRequest(leaveRequest, submittedByUserId) {
     if (!leaveType.isActive) {
       throw createServiceError("The selected leave type is inactive", 409);
     }
+    if (leaveType.code === "SICK" && startDate !== employee.today) {
+      throw createServiceError(
+        "Sick Leave must start on the current date",
+        400,
+      );
+    }
+    if (leaveType.requiresAttachment && !attachment) {
+      throw createServiceError(
+        `${leaveType.name} requires a supporting attachment`,
+        400,
+      );
+    }
 
+    /*
+     * Avoid collecting and retaining unnecessary
+     * personal documents for leave types whose
+     * policies do not require them.
+     */
+    if (!leaveType.requiresAttachment && attachment) {
+      throw createServiceError(
+        `${leaveType.name} does not require a supporting attachment`,
+        400,
+      );
+    }
+
+    if (attachment) {
+      const allowedMimeTypes = ["application/pdf", "image/jpeg", "image/png"];
+
+      if (!allowedMimeTypes.includes(attachment.mimeType)) {
+        throw createServiceError(
+          "Attachment must be a PDF, JPG, JPEG or PNG file",
+          400,
+        );
+      }
+
+      if (
+        !Number.isInteger(attachment.fileSize) ||
+        attachment.fileSize <= 0 ||
+        attachment.fileSize > 5 * 1024 * 1024
+      ) {
+        throw createServiceError("Attachment must not exceed 5 MB", 400);
+      }
+
+      if (!attachment.originalFilename || !attachment.storedFilename) {
+        throw createServiceError("Attachment information is incomplete", 400);
+      }
+    }
     if (leaveType.code === "ANNUAL") {
       if (
         !employee.continuousServiceStartDate ||
@@ -894,7 +987,64 @@ export async function insertLeaveRequest(leaveRequest, submittedByUserId) {
     );
 
     const createdRequest = requestResult.rows[0];
+    let createdAttachment = null;
 
+    if (attachment) {
+      const attachmentResult = await client.query(
+        `
+        INSERT INTO
+          leave_request_attachments (
+            leave_request_id,
+            original_filename,
+            stored_filename,
+            mime_type,
+            file_size,
+            uploaded_by_user_id
+          )
+        VALUES (
+          $1,
+          $2,
+          $3,
+          $4,
+          $5,
+          $6
+        )
+        RETURNING
+          id,
+
+          leave_request_id
+            AS "leaveRequestId",
+
+          original_filename
+            AS "originalFilename",
+
+          stored_filename
+            AS "storedFilename",
+
+          mime_type
+            AS "mimeType",
+
+          file_size
+            AS "fileSize",
+
+          uploaded_by_user_id
+            AS "uploadedByUserId",
+
+          uploaded_at
+            AS "uploadedAt"
+      `,
+        [
+          createdRequest.id,
+          attachment.originalFilename,
+          attachment.storedFilename,
+          attachment.mimeType,
+          attachment.fileSize,
+          submittedByUserId,
+        ],
+      );
+
+      createdAttachment = attachmentResult.rows[0];
+    }
     const createdRequirements = [];
 
     for (const requirement of requirements) {
@@ -954,10 +1104,18 @@ export async function insertLeaveRequest(leaveRequest, submittedByUserId) {
     return {
       leaveRequest: {
         ...createdRequest,
+
         leaveTypeCode: leaveType.code,
+
         leaveTypeName: leaveType.name,
+
         requiresAttachment: leaveType.requiresAttachment,
+
+        hasAttachment: Boolean(createdAttachment),
       },
+
+      attachment: createdAttachment,
+
       requirements: createdRequirements,
     };
   } catch (error) {
@@ -1395,25 +1553,29 @@ export async function decideLeaveApprovalRequirement({
   try {
     await client.query("BEGIN");
 
+    /*
+     * Lock the approval requirement and its leave request.
+     * This prevents two decisions from being processed
+     * against the same approval stage simultaneously.
+     */
     const result = await client.query(
       `
         SELECT
-          requirements.id
-            AS "requirementId",
+          requirements.id,
+
+          requirements.leave_request_id
+            AS "leaveRequestId",
 
           requirements.stage,
 
           requirements.sequence_order
             AS "sequenceOrder",
 
-          requirements.assigned_user_id
-            AS "assignedUserId",
-
           requirements.status
             AS "requirementStatus",
 
-          requests.id
-            AS "requestId",
+          requirements.assigned_user_id
+            AS "assignedUserId",
 
           requests.employee_id
             AS "employeeId",
@@ -1430,11 +1592,11 @@ export async function decideLeaveApprovalRequirement({
           requests.requested_days
             AS "requestedDays",
 
-          requests.status
-            AS "requestStatus",
-
           requests.workflow_version
             AS "workflowVersion",
+
+          requests.status
+            AS "requestStatus",
 
           requests.approval_route
             AS "approvalRoute",
@@ -1444,12 +1606,6 @@ export async function decideLeaveApprovalRequirement({
 
           requests.submitted_by_user_id
             AS "submittedByUserId",
-
-          leave_types.code
-            AS "leaveTypeCode",
-
-          leave_types.name
-            AS "leaveTypeName",
 
           leave_types.entitlement_mode
             AS "entitlementMode"
@@ -1481,7 +1637,7 @@ export async function decideLeaveApprovalRequirement({
       throw createServiceError("Leave approval requirement not found", 404);
     }
 
-    if (workflow.workflowVersion !== 2) {
+    if (Number(workflow.workflowVersion) !== 2) {
       throw createServiceError(
         "This endpoint only supports workflow version 2 requests",
         409,
@@ -1502,20 +1658,42 @@ export async function decideLeaveApprovalRequirement({
       );
     }
 
-    if (workflow.assignedUserId !== actionByUserId) {
+    /*
+     * A waiting or future stage cannot be decided
+     * before it becomes the request's active stage.
+     */
+    if (workflow.stage !== workflow.currentStage) {
+      throw createServiceError(
+        `The ${workflow.stage} approval stage is not currently active`,
+        409,
+      );
+    }
+
+    /*
+     * Having the correct role is insufficient.
+     * The decision must belong to this exact user.
+     */
+    if (Number(workflow.assignedUserId) !== Number(actionByUserId)) {
       throw createServiceError(
         "This approval stage is not assigned to your account",
         403,
       );
     }
 
-    if (workflow.submittedByUserId === actionByUserId) {
+    /*
+     * Protect against an incorrectly configured
+     * workflow assigning approval to the requester.
+     */
+    if (Number(workflow.submittedByUserId) === Number(actionByUserId)) {
       throw createServiceError(
         "You cannot approve your own leave request",
         403,
       );
     }
 
+    /*
+     * Record the immutable decision history.
+     */
     await client.query(
       `
         INSERT INTO leave_approval_actions (
@@ -1545,32 +1723,56 @@ export async function decideLeaveApprovalRequirement({
       ],
     );
 
-    await client.query(
+    /*
+     * Complete the current approval requirement.
+     */
+    const requirementUpdateResult = await client.query(
       `
-        UPDATE leave_approval_requirements
-        SET
-          status = $2,
-          completed_by_user_id = $3,
-          completed_at =
-            CURRENT_TIMESTAMP,
-          updated_at =
-            CURRENT_TIMESTAMP
-        WHERE id = $1
-      `,
+          UPDATE leave_approval_requirements
+          SET
+            status = $2,
+
+            completed_by_user_id = $3,
+
+            completed_at =
+              CURRENT_TIMESTAMP,
+
+            updated_at =
+              CURRENT_TIMESTAMP
+
+          WHERE id = $1
+            AND status = 'PENDING'
+
+          RETURNING id
+        `,
       [requirementId, decision, actionByUserId],
     );
 
+    if (requirementUpdateResult.rowCount !== 1) {
+      throw createServiceError(
+        "The approval stage changed before the decision was completed",
+        409,
+      );
+    }
+
+    /*
+     * Rejection ends the entire workflow.
+     */
     if (decision === "REJECTED") {
       await client.query(
         `
           UPDATE leave_approval_requirements
           SET
             status = 'CANCELLED',
+
             completed_by_user_id = $2,
+
             completed_at =
               CURRENT_TIMESTAMP,
+
             updated_at =
               CURRENT_TIMESTAMP
+
           WHERE leave_request_id = $1
             AND status = 'WAITING'
         `,
@@ -1582,20 +1784,31 @@ export async function decideLeaveApprovalRequirement({
             UPDATE leave_requests
             SET
               status = 'REJECTED',
+
               current_stage = 'COMPLETE',
+
               decision_note = $2,
+
               decided_by_user_id = $3,
+
               decision_at =
                 CURRENT_TIMESTAMP,
+
               balance_status =
                 'NOT_APPLICABLE',
+
               return_status =
                 'NOT_APPLICABLE',
+
               updated_at =
                 CURRENT_TIMESTAMP
+
             WHERE id = $1
+              AND status = 'PENDING'
+
             RETURNING
               id,
+
               status,
 
               approval_route
@@ -1622,33 +1835,60 @@ export async function decideLeaveApprovalRequirement({
         [requestId, comment, actionByUserId],
       );
 
+      if (rejectedRequestResult.rowCount !== 1) {
+        throw createServiceError(
+          "The leave request changed before rejection was completed",
+          409,
+        );
+      }
+
       await client.query("COMMIT");
 
       return {
         leaveRequest: rejectedRequestResult.rows[0],
+
         completedStage: workflow.stage,
+
         decision,
+
         isFinalApproval: false,
+
         nextStage: null,
+
+        nextRequirement: null,
+
         allocations: [],
       };
     }
 
+    /*
+     * Find the next waiting workflow requirement.
+     */
     const nextRequirementResult = await client.query(
       `
           SELECT
             id,
+
             stage,
+
             sequence_order
               AS "sequenceOrder",
+
             assigned_user_id
               AS "assignedUserId"
+
           FROM leave_approval_requirements
+
           WHERE leave_request_id = $1
             AND status = 'WAITING'
             AND sequence_order > $2
-          ORDER BY sequence_order ASC
+
+          ORDER BY
+            sequence_order ASC,
+            id ASC
+
           LIMIT 1
+
           FOR UPDATE
         `,
       [requestId, workflow.sequenceOrder],
@@ -1656,29 +1896,49 @@ export async function decideLeaveApprovalRequirement({
 
     const nextRequirement = nextRequirementResult.rows[0];
 
+    /*
+     * Activate the next approval stage when one exists.
+     */
     if (nextRequirement) {
-      await client.query(
+      const nextRequirementUpdateResult = await client.query(
         `
-          UPDATE leave_approval_requirements
-          SET
-            status = 'PENDING',
-            updated_at =
-              CURRENT_TIMESTAMP
-          WHERE id = $1
-        `,
+            UPDATE leave_approval_requirements
+            SET
+              status = 'PENDING',
+
+              updated_at =
+                CURRENT_TIMESTAMP
+
+            WHERE id = $1
+              AND status = 'WAITING'
+
+            RETURNING id
+          `,
         [nextRequirement.id],
       );
+
+      if (nextRequirementUpdateResult.rowCount !== 1) {
+        throw createServiceError(
+          "The next approval stage changed before it could be activated",
+          409,
+        );
+      }
 
       const pendingRequestResult = await client.query(
         `
             UPDATE leave_requests
             SET
               current_stage = $2,
+
               updated_at =
                 CURRENT_TIMESTAMP
+
             WHERE id = $1
+              AND status = 'PENDING'
+
             RETURNING
               id,
+
               status,
 
               approval_route
@@ -1696,6 +1956,13 @@ export async function decideLeaveApprovalRequirement({
         [requestId, nextRequirement.stage],
       );
 
+      if (pendingRequestResult.rowCount !== 1) {
+        throw createServiceError(
+          "The leave request changed before the next stage could be activated",
+          409,
+        );
+      }
+
       await client.query("COMMIT");
 
       return {
@@ -1707,11 +1974,19 @@ export async function decideLeaveApprovalRequirement({
 
         isFinalApproval: false,
 
+        nextStage: nextRequirement.stage,
+
+        nextAssignedUserId: nextRequirement.assignedUserId,
+
         nextRequirement: {
           id: nextRequirement.id,
+
           stage: nextRequirement.stage,
+
           sequenceOrder: nextRequirement.sequenceOrder,
+
           assignedUserId: nextRequirement.assignedUserId,
+
           status: "PENDING",
         },
 
@@ -1719,16 +1994,25 @@ export async function decideLeaveApprovalRequirement({
       };
     }
 
+    /*
+     * No next requirement means this is the final approval.
+     */
     let allocations = [];
+
     let balanceStatus = "NOT_APPLICABLE";
 
     if (workflow.entitlementMode === "ANNUAL_BUCKET") {
       allocations = await reserveAnnualLeaveFIFO(client, {
         requestId,
+
         employeeId: workflow.employeeId,
+
         leaveTypeId: workflow.leaveTypeId,
+
         leaveStartDate: workflow.startDate,
+
         requestedDays: workflow.requestedDays,
+
         actionByUserId,
       });
 
@@ -1740,58 +2024,98 @@ export async function decideLeaveApprovalRequirement({
           UPDATE leave_requests
           SET
             status = 'APPROVED',
+
             current_stage = 'COMPLETE',
+
             decision_note = $2,
+
             decided_by_user_id = $3,
+
             decision_at =
               CURRENT_TIMESTAMP,
+
             final_approved_by_user_id =
               $3,
+
             final_approved_at =
               CURRENT_TIMESTAMP,
+
             balance_status = $4,
+
             return_status =
               'AWAITING_RETURN',
+
             updated_at =
               CURRENT_TIMESTAMP
+
           WHERE id = $1
+            AND status = 'PENDING'
+
           RETURNING
             id,
+
             employee_id
               AS "employeeId",
+
             leave_type_id
               AS "leaveTypeId",
+
             start_date
               AS "startDate",
+
             end_date
               AS "endDate",
+
             requested_days
               AS "requestedDays",
+
             status,
+
             approval_route
               AS "approvalRoute",
+
             current_stage
               AS "currentStage",
+
             final_approved_by_user_id
               AS "finalApprovedByUserId",
+
             final_approved_at
               AS "finalApprovedAt",
+
             balance_status
               AS "balanceStatus",
+
             return_status
               AS "returnStatus"
         `,
       [requestId, comment, actionByUserId, balanceStatus],
     );
 
+    if (approvedRequestResult.rowCount !== 1) {
+      throw createServiceError(
+        "The leave request changed before final approval was completed",
+        409,
+      );
+    }
+
     await client.query("COMMIT");
 
     return {
       leaveRequest: approvedRequestResult.rows[0],
+
       completedStage: workflow.stage,
+
       decision,
+
       isFinalApproval: true,
+
       nextStage: null,
+
+      nextAssignedUserId: null,
+
+      nextRequirement: null,
+
       allocations,
     };
   } catch (error) {
@@ -2585,25 +2909,61 @@ export async function createLeaveCancellationRequest({
   try {
     await client.query("BEGIN");
 
+    /*
+     * Lock the leave request so its status cannot change
+     * while the cancellation workflow is being created.
+     */
     const leaveResult = await client.query(
       `
-          SELECT
-            requests.id,
-            requests.employee_id
-              AS "employeeId",
-            requests.status,
-            requests.start_date
-              AS "startDate",
-            requests.cancellation_status
-              AS "cancellationStatus",
-            requests.final_approved_by_user_id
-              AS "finalApprovedByUserId",
-            CURRENT_DATE::text
-              AS "today"
-          FROM leave_requests AS requests
-          WHERE requests.id = $1
-          FOR UPDATE
-        `,
+        SELECT
+          requests.id,
+
+          requests.employee_id
+            AS "employeeId",
+
+          requests.status,
+
+          requests.start_date
+            AS "startDate",
+
+          requests.approval_route
+            AS "approvalRoute",
+
+          requests.cancellation_status
+            AS "cancellationStatus",
+
+          requests.final_approved_by_user_id
+            AS "finalApprovedByUserId",
+
+          CURRENT_DATE::text
+            AS "today",
+
+          CASE
+            WHEN requests.approval_route IN (
+              'CEO_ONLY',
+              'CEO_APPROVAL'
+            )
+            THEN 'CEO'
+
+            WHEN requests.approval_route =
+              'CHAIRMAN_APPROVAL'
+            THEN 'CHAIRMAN'
+
+            WHEN requests.approval_route IN (
+              'STANDARD',
+              'LEGACY'
+            )
+            THEN 'HR'
+
+            ELSE NULL
+          END AS "decisionStage"
+
+        FROM leave_requests AS requests
+
+        WHERE requests.id = $1
+
+        FOR UPDATE
+      `,
       [leaveRequestId],
     );
 
@@ -2613,7 +2973,8 @@ export async function createLeaveCancellationRequest({
       throw createServiceError("Leave request not found", 404);
     }
 
-    const isOwner = Number(requesterEmployeeId) === leaveRequest.employeeId;
+    const isOwner =
+      Number(requesterEmployeeId) === Number(leaveRequest.employeeId);
 
     const canManage = ["ADMIN", "HR"].includes(requesterRole);
 
@@ -2659,41 +3020,153 @@ export async function createLeaveCancellationRequest({
       );
     }
 
-    if (leaveRequest.finalApprovedByUserId === requestedByUserId && !isOwner) {
+    if (!leaveRequest.decisionStage) {
       throw createServiceError(
-        "The final approver cannot initiate and decide the same cancellation request",
+        `Cancellation routing is not configured for approval route ${leaveRequest.approvalRoute || "UNKNOWN"}`,
         409,
       );
     }
 
+    /*
+     * Resolve the currently configured HR, CEO or
+     * Chairman responsible for this cancellation.
+     */
+    const approverResult = await client.query(
+      `
+          SELECT
+            approvers.user_id
+              AS "userId",
+
+            users.full_name
+              AS "fullName",
+
+            users.role,
+
+            approvers.authority_stage
+              AS "authorityStage"
+
+          FROM leave_workflow_approvers
+            AS approvers
+
+          JOIN app_users AS users
+            ON users.id =
+              approvers.user_id
+
+          WHERE approvers.authority_stage =
+            $1
+
+            AND approvers.is_active =
+              TRUE
+
+            AND approvers.effective_from <=
+              CURRENT_DATE
+
+            AND (
+              approvers.effective_to
+                IS NULL
+
+              OR approvers.effective_to >=
+                CURRENT_DATE
+            )
+
+            AND users.is_active =
+              TRUE
+
+          ORDER BY
+            approvers.effective_from DESC,
+            approvers.id DESC
+
+          LIMIT 1
+        `,
+      [leaveRequest.decisionStage],
+    );
+
+    const assignedApprover = approverResult.rows[0];
+
+    if (!assignedApprover) {
+      throw createServiceError(
+        `No active ${leaveRequest.decisionStage} cancellation decision-maker is configured`,
+        409,
+      );
+    }
+
+    if (!assignedApprover.userId) {
+      throw createServiceError(
+        "The configured cancellation decision-maker has no user ID",
+        409,
+      );
+    }
+
+    /*
+     * Managers may initiate cancellations on behalf of
+     * employees, but they cannot initiate and decide
+     * the same cancellation.
+     */
+    if (
+      !isOwner &&
+      Number(assignedApprover.userId) === Number(requestedByUserId)
+    ) {
+      throw createServiceError(
+        "You cannot initiate and decide the same cancellation request",
+        403,
+      );
+    }
+
+    /*
+     * Store the assigned user directly on the cancellation
+     * request. This freezes decision ownership.
+     */
     const cancellationResult = await client.query(
       `
           INSERT INTO
             leave_cancellation_requests (
               leave_request_id,
               cancellation_reason,
-              requested_by_user_id
+              requested_by_user_id,
+              assigned_decision_user_id
             )
-          VALUES ($1, $2, $3)
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4
+          )
           RETURNING
             id,
+
             leave_request_id
               AS "leaveRequestId",
+
             cancellation_reason
               AS "cancellationReason",
+
             status,
+
             requested_by_user_id
               AS "requestedByUserId",
+
+            assigned_decision_user_id
+              AS "assignedDecisionUserId",
+
             requested_at
               AS "requestedAt",
+
             released_days
               AS "releasedDays"
         `,
-      [leaveRequestId, cancellationReason, requestedByUserId],
+      [
+        leaveRequestId,
+        cancellationReason,
+        requestedByUserId,
+        assignedApprover.userId,
+      ],
     );
 
     const cancellation = cancellationResult.rows[0];
 
+    /*
+     * Record the immutable cancellation audit action.
+     */
     await client.query(
       `
         INSERT INTO
@@ -2715,37 +3188,50 @@ export async function createLeaveCancellationRequest({
       [cancellation.id, leaveRequestId, cancellationReason, requestedByUserId],
     );
 
-    await client.query(
+    /*
+     * Mark the parent leave request as having a
+     * pending cancellation.
+     */
+    const leaveUpdateResult = await client.query(
       `
-        UPDATE leave_requests
-        SET
-          cancellation_status =
-            'PENDING',
-          updated_at =
-            CURRENT_TIMESTAMP
-        WHERE id = $1
-      `,
+          UPDATE leave_requests
+          SET
+            cancellation_status =
+              'PENDING',
+
+            updated_at =
+              CURRENT_TIMESTAMP
+
+          WHERE id = $1
+            AND status = 'APPROVED'
+            AND cancellation_status IN (
+              'NONE',
+              'REJECTED'
+            )
+
+          RETURNING
+            id,
+
+            status,
+
+            cancellation_status
+              AS "cancellationStatus",
+
+            balance_status
+              AS "balanceStatus",
+
+            return_status
+              AS "returnStatus",
+
+            updated_at
+              AS "updatedAt"
+        `,
       [leaveRequestId],
     );
 
-    const approverResult = await client.query(
-      `
-          SELECT
-            id AS "userId",
-            full_name AS "fullName",
-            role
-          FROM app_users
-          WHERE id = $1
-            AND is_active = TRUE
-        `,
-      [leaveRequest.finalApprovedByUserId],
-    );
-
-    const assignedApprover = approverResult.rows[0];
-
-    if (!assignedApprover) {
+    if (leaveUpdateResult.rowCount !== 1) {
       throw createServiceError(
-        "The original final approver is not currently active",
+        "The leave request changed before the cancellation request could be completed",
         409,
       );
     }
@@ -2754,6 +3240,11 @@ export async function createLeaveCancellationRequest({
 
     return {
       cancellation,
+
+      leaveRequest: leaveUpdateResult.rows[0],
+
+      decisionStage: leaveRequest.decisionStage,
+
       assignedApprover,
     };
   } catch (error) {
@@ -2766,356 +3257,16 @@ export async function createLeaveCancellationRequest({
       );
     }
 
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
-export async function decideLeaveCancellationRequest({
-  leaveRequestId,
-  cancellationId,
-  decision,
-  decisionNote,
-  decidedByUserId,
-}) {
-  const client = await pool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const result = await client.query(
-      `
-        SELECT
-          cancellations.id
-            AS "cancellationId",
-          cancellations.status
-            AS "cancellationStatus",
-          cancellations.requested_by_user_id
-            AS "requestedByUserId",
-
-          requests.id
-            AS "leaveRequestId",
-          requests.employee_id
-            AS "employeeId",
-          requests.leave_type_id
-            AS "leaveTypeId",
-          requests.status
-            AS "leaveStatus",
-          requests.start_date
-            AS "startDate",
-          requests.balance_status
-            AS "balanceStatus",
-          requests.final_approved_by_user_id
-            AS "finalApprovedByUserId",
-
-          CURRENT_DATE::text
-            AS "today"
-
-        FROM leave_cancellation_requests
-          AS cancellations
-
-        JOIN leave_requests AS requests
-          ON requests.id =
-            cancellations.leave_request_id
-
-        WHERE cancellations.id = $1
-          AND requests.id = $2
-
-        FOR UPDATE OF
-          cancellations,
-          requests
-      `,
-      [cancellationId, leaveRequestId],
-    );
-
-    const cancellation = result.rows[0];
-
-    if (!cancellation) {
-      throw createServiceError("Leave cancellation request not found", 404);
-    }
-
-    if (cancellation.cancellationStatus !== "PENDING") {
+    if (
+      error.code === "23514" &&
+      error.constraint === "pending_leave_cancellation_requires_assignee"
+    ) {
       throw createServiceError(
-        `This cancellation request is already ${cancellation.cancellationStatus}`,
+        "The cancellation request has no assigned decision-maker",
         409,
       );
     }
 
-    if (cancellation.finalApprovedByUserId !== decidedByUserId) {
-      throw createServiceError(
-        "Only the original final leave approver may decide this cancellation",
-        403,
-      );
-    }
-
-    if (cancellation.requestedByUserId === decidedByUserId) {
-      throw createServiceError(
-        "You cannot decide a cancellation request that you initiated",
-        403,
-      );
-    }
-
-    if (decision === "REJECTED") {
-      const rejectedResult = await client.query(
-        `
-            UPDATE leave_cancellation_requests
-            SET
-              status = 'REJECTED',
-              decided_by_user_id = $2,
-              decided_at =
-                CURRENT_TIMESTAMP,
-              decision_note = $3,
-              updated_at =
-                CURRENT_TIMESTAMP
-            WHERE id = $1
-            RETURNING
-              id,
-              leave_request_id
-                AS "leaveRequestId",
-              status,
-              decision_note
-                AS "decisionNote",
-              decided_by_user_id
-                AS "decidedByUserId",
-              decided_at
-                AS "decidedAt",
-              released_days
-                AS "releasedDays"
-          `,
-        [cancellationId, decidedByUserId, decisionNote],
-      );
-
-      await client.query(
-        `
-          INSERT INTO
-            leave_cancellation_actions (
-              cancellation_request_id,
-              leave_request_id,
-              action,
-              comment,
-              action_by_user_id
-            )
-          VALUES (
-            $1,
-            $2,
-            'REJECTED',
-            $3,
-            $4
-          )
-        `,
-        [cancellationId, leaveRequestId, decisionNote, decidedByUserId],
-      );
-
-      await client.query(
-        `
-          UPDATE leave_requests
-          SET
-            cancellation_status =
-              'REJECTED',
-            updated_at =
-              CURRENT_TIMESTAMP
-          WHERE id = $1
-        `,
-        [leaveRequestId],
-      );
-
-      await client.query("COMMIT");
-
-      return {
-        cancellation: rejectedResult.rows[0],
-        leaveStatus: cancellation.leaveStatus,
-        balanceStatus: cancellation.balanceStatus,
-      };
-    }
-
-    if (cancellation.leaveStatus !== "APPROVED") {
-      throw createServiceError(
-        "Only an approved leave request can be cancelled",
-        409,
-      );
-    }
-
-    if (cancellation.startDate <= cancellation.today) {
-      throw createServiceError(
-        "Leave cancellation can no longer be approved because the leave has already started",
-        409,
-      );
-    }
-
-    const allocationsResult = await client.query(
-      `
-          SELECT
-            id,
-            entitlement_id
-              AS "entitlementId",
-            allocated_days
-              AS "allocatedDays",
-            status
-          FROM leave_entitlement_allocations
-          WHERE leave_request_id = $1
-          ORDER BY id
-          FOR UPDATE
-        `,
-      [leaveRequestId],
-    );
-
-    let releasedDays = 0;
-
-    for (const allocation of allocationsResult.rows) {
-      if (allocation.status !== "RESERVED") {
-        throw createServiceError(
-          "The leave balance allocation is no longer fully reserved",
-          409,
-        );
-      }
-
-      await client.query(
-        `
-          UPDATE
-            leave_entitlement_allocations
-          SET
-            consumed_days = 0,
-            restored_days =
-              allocated_days,
-            status = 'RELEASED',
-            reconciled_at =
-              CURRENT_TIMESTAMP,
-            updated_at =
-              CURRENT_TIMESTAMP
-          WHERE id = $1
-        `,
-        [allocation.id],
-      );
-
-      await client.query(
-        `
-          INSERT INTO
-            leave_balance_transactions (
-              employee_id,
-              leave_type_id,
-              entitlement_id,
-              leave_request_id,
-              transaction_type,
-              days,
-              transaction_note,
-              action_by_user_id
-            )
-          VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            'RELEASED',
-            $5,
-            $6,
-            $7
-          )
-        `,
-        [
-          cancellation.employeeId,
-          cancellation.leaveTypeId,
-          allocation.entitlementId,
-          leaveRequestId,
-          allocation.allocatedDays,
-          `Released after approved cancellation of leave request ${leaveRequestId}`,
-          decidedByUserId,
-        ],
-      );
-
-      releasedDays += allocation.allocatedDays;
-    }
-
-    const approvedCancellationResult = await client.query(
-      `
-          UPDATE leave_cancellation_requests
-          SET
-            status = 'APPROVED',
-            decided_by_user_id = $2,
-            decided_at =
-              CURRENT_TIMESTAMP,
-            decision_note = $3,
-            released_days = $4,
-            updated_at =
-              CURRENT_TIMESTAMP
-          WHERE id = $1
-          RETURNING
-            id,
-            leave_request_id
-              AS "leaveRequestId",
-            status,
-            cancellation_reason
-              AS "cancellationReason",
-            decision_note
-              AS "decisionNote",
-            decided_by_user_id
-              AS "decidedByUserId",
-            decided_at
-              AS "decidedAt",
-            released_days
-              AS "releasedDays"
-        `,
-      [cancellationId, decidedByUserId, decisionNote, releasedDays],
-    );
-
-    await client.query(
-      `
-        INSERT INTO
-          leave_cancellation_actions (
-            cancellation_request_id,
-            leave_request_id,
-            action,
-            comment,
-            action_by_user_id
-          )
-        VALUES (
-          $1,
-          $2,
-          'APPROVED',
-          $3,
-          $4
-        )
-      `,
-      [cancellationId, leaveRequestId, decisionNote, decidedByUserId],
-    );
-
-    const nextBalanceStatus =
-      cancellation.balanceStatus === "RESERVED" ? "RELEASED" : "NOT_APPLICABLE";
-
-    const leaveUpdateResult = await client.query(
-      `
-          UPDATE leave_requests
-          SET
-            status = 'CANCELLED',
-            cancellation_status =
-              'APPROVED',
-            balance_status = $2,
-            return_status =
-              'NOT_APPLICABLE',
-            updated_at =
-              CURRENT_TIMESTAMP
-          WHERE id = $1
-          RETURNING
-            id,
-            status,
-            cancellation_status
-              AS "cancellationStatus",
-            balance_status
-              AS "balanceStatus",
-            return_status
-              AS "returnStatus"
-        `,
-      [leaveRequestId, nextBalanceStatus],
-    );
-
-    await client.query("COMMIT");
-
-    return {
-      cancellation: approvedCancellationResult.rows[0],
-      leaveRequest: leaveUpdateResult.rows[0],
-    };
-  } catch (error) {
-    await client.query("ROLLBACK");
     throw error;
   } finally {
     client.release();
@@ -3146,6 +3297,15 @@ export async function findPendingLeaveCancellationsForUser(userId) {
         cancellations.requested_at
           AS "requestedAt",
 
+        cancellations.assigned_decision_user_id
+          AS "assignedDecisionUserId",
+
+        assigned_approver.full_name
+          AS "assignedDecisionUserName",
+
+        assigned_approver.role
+          AS "assignedDecisionUserRole",
+
         requests.status
           AS "leaveStatus",
 
@@ -3163,9 +3323,6 @@ export async function findPendingLeaveCancellationsForUser(userId) {
 
         requests.balance_status
           AS "balanceStatus",
-
-        requests.final_approved_by_user_id
-          AS "assignedDecisionUserId",
 
         employees.id
           AS "employeeId",
@@ -3214,14 +3371,17 @@ export async function findPendingLeaveCancellationsForUser(userId) {
 
         COALESCE(
           (
-            SELECT SUM(
-              allocations.allocated_days
-            )::integer
+            SELECT
+              SUM(
+                allocations.allocated_days
+              )::integer
+
             FROM leave_entitlement_allocations
               AS allocations
-            WHERE
-              allocations.leave_request_id =
-                requests.id
+
+            WHERE allocations.leave_request_id =
+              requests.id
+
               AND allocations.status =
                 'RESERVED'
           ),
@@ -3247,13 +3407,27 @@ export async function findPendingLeaveCancellationsForUser(userId) {
         ON requester.id =
           cancellations.requested_by_user_id
 
+      JOIN app_users AS assigned_approver
+        ON assigned_approver.id =
+          cancellations.assigned_decision_user_id
+
       LEFT JOIN employee_position_assignments
         AS assignments
         ON assignments.employee_id =
           employees.id
-        AND assignments.end_date IS NULL
+
         AND assignments.assignment_type =
           'SUBSTANTIVE'
+
+        AND assignments.start_date <=
+          CURRENT_DATE
+
+        AND (
+          assignments.end_date IS NULL
+
+          OR assignments.end_date >=
+            CURRENT_DATE
+        )
 
       LEFT JOIN positions
         ON positions.id =
@@ -3263,9 +3437,8 @@ export async function findPendingLeaveCancellationsForUser(userId) {
         ON departments.id =
           positions.department_id
 
-      WHERE
-        cancellations.status =
-          'PENDING'
+      WHERE cancellations.status =
+        'PENDING'
 
         AND requests.status =
           'APPROVED'
@@ -3273,8 +3446,8 @@ export async function findPendingLeaveCancellationsForUser(userId) {
         AND requests.cancellation_status =
           'PENDING'
 
-        AND requests.final_approved_by_user_id =
-          $1
+        AND cancellations
+          .assigned_decision_user_id = $1
 
       ORDER BY
         cancellations.requested_at ASC,
@@ -4755,7 +4928,7 @@ export async function findPendingLeaveReturns() {
           employees.last_name
         ) AS "employeeName",
 
-        profiles.photo_filename
+        employees.photo_filename
           AS "photoFilename",
 
         leave_types.id
@@ -4800,9 +4973,6 @@ export async function findPendingLeaveReturns() {
         ON reporting_users.id =
           returns.reported_by_user_id
 
-      LEFT JOIN employee_profiles AS profiles
-        ON profiles.employee_id =
-          employees.id
 
       LEFT JOIN employee_position_assignments
         AS assignments
@@ -4838,4 +5008,748 @@ export async function findPendingLeaveReturns() {
   );
 
   return result.rows;
+}
+export async function findEmployeesCurrentlyOnLeave() {
+  const result = await pool.query(
+    `
+      SELECT
+        requests.id
+          AS "leaveRequestId",
+
+        requests.employee_id
+          AS "employeeId",
+
+        requests.start_date
+          AS "startDate",
+
+        requests.end_date
+          AS "endDate",
+
+        requests.requested_days
+          AS "requestedDays",
+
+        requests.status
+          AS "leaveStatus",
+
+        requests.balance_status
+          AS "balanceStatus",
+
+        requests.return_status
+          AS "returnStatus",
+
+        requests.final_approved_at
+          AS "approvedAt",
+
+        employees.staff_number
+          AS "staffNumber",
+
+        employees.first_name
+          AS "firstName",
+
+        employees.last_name
+          AS "lastName",
+
+        CONCAT(
+          employees.first_name,
+          ' ',
+          employees.last_name
+        ) AS "employeeName",
+
+        employees.photo_filename
+          AS "photoFilename",
+
+        leave_types.id
+          AS "leaveTypeId",
+
+        leave_types.code
+          AS "leaveTypeCode",
+
+        leave_types.name
+          AS "leaveTypeName",
+
+        current_position.id
+          AS "positionId",
+
+        current_position.position_code
+          AS "positionCode",
+
+        current_position.title
+          AS "position",
+
+        current_position.department_id
+          AS "departmentId",
+
+        current_position.department
+          AS "department",
+
+        CURRENT_DATE::text
+          AS "today"
+
+      FROM leave_requests AS requests
+
+      JOIN employees
+        ON employees.id =
+          requests.employee_id
+
+      JOIN leave_types
+        ON leave_types.id =
+          requests.leave_type_id
+
+      LEFT JOIN LATERAL (
+        SELECT
+          positions.id,
+
+          positions.position_code,
+
+          positions.title,
+
+          departments.id
+            AS department_id,
+
+          departments.name
+            AS department
+
+        FROM employee_position_assignments
+          AS assignments
+
+        JOIN positions
+          ON positions.id =
+            assignments.position_id
+
+        LEFT JOIN departments
+          ON departments.id =
+            positions.department_id
+
+        WHERE assignments.employee_id =
+          employees.id
+
+          AND assignments.assignment_type =
+            'SUBSTANTIVE'
+
+          AND assignments.start_date <=
+            CURRENT_DATE
+
+          AND (
+            assignments.end_date IS NULL
+            OR assignments.end_date >=
+              CURRENT_DATE
+          )
+
+        ORDER BY
+          assignments.start_date DESC,
+          assignments.id DESC
+
+        LIMIT 1
+      ) AS current_position
+        ON TRUE
+
+      WHERE requests.status = 'APPROVED'
+
+        AND requests.start_date <=
+          CURRENT_DATE
+
+        AND requests.end_date >=
+          CURRENT_DATE
+
+        AND requests.return_status =
+          'AWAITING_RETURN'
+
+        AND requests.cancellation_status <>
+          'APPROVED'
+
+      ORDER BY
+        requests.end_date ASC,
+        employees.first_name ASC,
+        employees.last_name ASC
+    `,
+  );
+
+  const employeesOnLeave = await Promise.all(
+    result.rows.map(async (record) => {
+      const expectedReturnDate = await findNextWorkingDate(
+        pool,
+        record.endDate,
+      );
+
+      const remainingWorkingDays = await calculateWorkingDays(
+        pool,
+        record.today,
+        record.endDate,
+      );
+
+      return {
+        leaveRequestId: record.leaveRequestId,
+
+        employeeId: record.employeeId,
+
+        staffNumber: record.staffNumber,
+
+        firstName: record.firstName,
+
+        lastName: record.lastName,
+
+        employeeName: record.employeeName,
+
+        photoFilename: record.photoFilename,
+
+        positionId: record.positionId,
+
+        positionCode: record.positionCode,
+
+        position: record.position,
+
+        departmentId: record.departmentId,
+
+        department: record.department,
+
+        leaveTypeId: record.leaveTypeId,
+
+        leaveTypeCode: record.leaveTypeCode,
+
+        leaveTypeName: record.leaveTypeName,
+
+        startDate: record.startDate,
+
+        endDate: record.endDate,
+
+        expectedReturnDate,
+
+        requestedDays: record.requestedDays,
+
+        remainingWorkingDays,
+
+        isReturningSoon: remainingWorkingDays <= 3,
+
+        leaveStatus: record.leaveStatus,
+
+        balanceStatus: record.balanceStatus,
+
+        returnStatus: record.returnStatus,
+
+        approvedAt: record.approvedAt,
+      };
+    }),
+  );
+
+  return employeesOnLeave;
+}
+export async function decideLeaveCancellationRequest({
+  leaveRequestId,
+  cancellationId,
+  decision,
+  decisionNote,
+  decidedByUserId,
+}) {
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `
+        SELECT
+          cancellations.id
+            AS "cancellationId",
+
+          cancellations.status
+            AS "cancellationStatus",
+
+          cancellations.requested_by_user_id
+            AS "requestedByUserId",
+
+          cancellations.assigned_decision_user_id
+            AS "assignedDecisionUserId",
+
+          requests.id
+            AS "leaveRequestId",
+
+          requests.employee_id
+            AS "employeeId",
+
+          requests.leave_type_id
+            AS "leaveTypeId",
+
+          requests.status
+            AS "leaveStatus",
+
+          requests.start_date
+            AS "startDate",
+
+          requests.balance_status
+            AS "balanceStatus",
+
+          requests.cancellation_status
+            AS "requestCancellationStatus",
+
+          leave_types.entitlement_mode
+            AS "entitlementMode",
+
+          CURRENT_DATE::text
+            AS "today"
+
+        FROM leave_cancellation_requests
+          AS cancellations
+
+        JOIN leave_requests AS requests
+          ON requests.id =
+            cancellations.leave_request_id
+
+        JOIN leave_types
+          ON leave_types.id =
+            requests.leave_type_id
+
+        WHERE cancellations.id = $1
+          AND requests.id = $2
+
+        FOR UPDATE OF
+          cancellations,
+          requests
+      `,
+      [cancellationId, leaveRequestId],
+    );
+
+    const cancellation = result.rows[0];
+
+    if (!cancellation) {
+      throw createServiceError("Leave cancellation request not found", 404);
+    }
+
+    if (cancellation.cancellationStatus !== "PENDING") {
+      throw createServiceError(
+        `This cancellation request is already ${cancellation.cancellationStatus}`,
+        409,
+      );
+    }
+
+    if (cancellation.requestCancellationStatus !== "PENDING") {
+      throw createServiceError(
+        "The parent leave request no longer has a pending cancellation",
+        409,
+      );
+    }
+
+    /*
+     * Exact-user authorization.
+     * Having HR, CEO or Chairman role is not enough.
+     */
+    if (
+      Number(cancellation.assignedDecisionUserId) !== Number(decidedByUserId)
+    ) {
+      throw createServiceError(
+        "This cancellation decision is assigned to another user",
+        403,
+      );
+    }
+
+    if (Number(cancellation.requestedByUserId) === Number(decidedByUserId)) {
+      throw createServiceError(
+        "You cannot decide a cancellation request that you initiated",
+        403,
+      );
+    }
+
+    /*
+     * Rejection does not change the leave status
+     * or release any reserved balance.
+     */
+    if (decision === "REJECTED") {
+      const rejectedResult = await client.query(
+        `
+            UPDATE leave_cancellation_requests
+            SET
+              status = 'REJECTED',
+
+              decided_by_user_id = $2,
+
+              decided_at =
+                CURRENT_TIMESTAMP,
+
+              decision_note = $3,
+
+              updated_at =
+                CURRENT_TIMESTAMP
+
+            WHERE id = $1
+              AND status = 'PENDING'
+
+            RETURNING
+              id,
+
+              leave_request_id
+                AS "leaveRequestId",
+
+              status,
+
+              cancellation_reason
+                AS "cancellationReason",
+
+              assigned_decision_user_id
+                AS "assignedDecisionUserId",
+
+              decision_note
+                AS "decisionNote",
+
+              decided_by_user_id
+                AS "decidedByUserId",
+
+              decided_at
+                AS "decidedAt",
+
+              released_days
+                AS "releasedDays"
+          `,
+        [cancellationId, decidedByUserId, decisionNote],
+      );
+
+      if (rejectedResult.rowCount !== 1) {
+        throw createServiceError(
+          "The cancellation request changed before rejection was completed",
+          409,
+        );
+      }
+
+      await client.query(
+        `
+          INSERT INTO
+            leave_cancellation_actions (
+              cancellation_request_id,
+              leave_request_id,
+              action,
+              comment,
+              action_by_user_id
+            )
+          VALUES (
+            $1,
+            $2,
+            'REJECTED',
+            $3,
+            $4
+          )
+        `,
+        [cancellationId, leaveRequestId, decisionNote, decidedByUserId],
+      );
+
+      const leaveUpdateResult = await client.query(
+        `
+            UPDATE leave_requests
+            SET
+              cancellation_status =
+                'REJECTED',
+
+              updated_at =
+                CURRENT_TIMESTAMP
+
+            WHERE id = $1
+              AND status = 'APPROVED'
+              AND cancellation_status =
+                'PENDING'
+
+            RETURNING
+              id,
+
+              status,
+
+              cancellation_status
+                AS "cancellationStatus",
+
+              balance_status
+                AS "balanceStatus",
+
+              return_status
+                AS "returnStatus"
+          `,
+        [leaveRequestId],
+      );
+
+      if (leaveUpdateResult.rowCount !== 1) {
+        throw createServiceError(
+          "The leave request changed before cancellation rejection was completed",
+          409,
+        );
+      }
+
+      await client.query("COMMIT");
+
+      return {
+        cancellation: rejectedResult.rows[0],
+
+        leaveRequest: leaveUpdateResult.rows[0],
+      };
+    }
+
+    /*
+     * Approval is only valid before the leave starts.
+     */
+    if (cancellation.leaveStatus !== "APPROVED") {
+      throw createServiceError(
+        "Only an approved leave request can be cancelled",
+        409,
+      );
+    }
+
+    if (cancellation.startDate <= cancellation.today) {
+      throw createServiceError(
+        "Leave cancellation can no longer be approved because the leave has already started",
+        409,
+      );
+    }
+
+    const allocationsResult = await client.query(
+      `
+          SELECT
+            id,
+
+            entitlement_id
+              AS "entitlementId",
+
+            allocated_days
+              AS "allocatedDays",
+
+            status
+
+          FROM leave_entitlement_allocations
+
+          WHERE leave_request_id = $1
+
+          ORDER BY id ASC
+
+          FOR UPDATE
+        `,
+      [leaveRequestId],
+    );
+
+    /*
+     * Annual-bucket leave must have reserved
+     * allocations before cancellation approval.
+     */
+    if (
+      cancellation.entitlementMode === "ANNUAL_BUCKET" &&
+      allocationsResult.rows.length === 0
+    ) {
+      throw createServiceError(
+        "The approved annual leave has no reserved balance allocations",
+        409,
+      );
+    }
+
+    let releasedDays = 0;
+
+    for (const allocation of allocationsResult.rows) {
+      if (allocation.status !== "RESERVED") {
+        throw createServiceError(
+          "The leave balance allocation is no longer fully reserved",
+          409,
+        );
+      }
+
+      const allocationUpdateResult = await client.query(
+        `
+            UPDATE leave_entitlement_allocations
+            SET
+              consumed_days = 0,
+
+              restored_days =
+                allocated_days,
+
+              status = 'RELEASED',
+
+              reconciled_at =
+                CURRENT_TIMESTAMP,
+
+              updated_at =
+                CURRENT_TIMESTAMP
+
+            WHERE id = $1
+              AND status = 'RESERVED'
+
+            RETURNING id
+          `,
+        [allocation.id],
+      );
+
+      if (allocationUpdateResult.rowCount !== 1) {
+        throw createServiceError(
+          "A leave allocation changed before it could be released",
+          409,
+        );
+      }
+
+      await client.query(
+        `
+          INSERT INTO
+            leave_balance_transactions (
+              employee_id,
+              leave_type_id,
+              entitlement_id,
+              leave_request_id,
+              transaction_type,
+              days,
+              transaction_note,
+              action_by_user_id
+            )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            'RELEASED',
+            $5,
+            $6,
+            $7
+          )
+        `,
+        [
+          cancellation.employeeId,
+          cancellation.leaveTypeId,
+          allocation.entitlementId,
+          leaveRequestId,
+          allocation.allocatedDays,
+          `Released after approved cancellation of leave request ${leaveRequestId}`,
+          decidedByUserId,
+        ],
+      );
+
+      releasedDays += allocation.allocatedDays;
+    }
+
+    const approvedCancellationResult = await client.query(
+      `
+          UPDATE leave_cancellation_requests
+          SET
+            status = 'APPROVED',
+
+            decided_by_user_id = $2,
+
+            decided_at =
+              CURRENT_TIMESTAMP,
+
+            decision_note = $3,
+
+            released_days = $4,
+
+            updated_at =
+              CURRENT_TIMESTAMP
+
+          WHERE id = $1
+            AND status = 'PENDING'
+
+          RETURNING
+            id,
+
+            leave_request_id
+              AS "leaveRequestId",
+
+            status,
+
+            cancellation_reason
+              AS "cancellationReason",
+
+            assigned_decision_user_id
+              AS "assignedDecisionUserId",
+
+            decision_note
+              AS "decisionNote",
+
+            decided_by_user_id
+              AS "decidedByUserId",
+
+            decided_at
+              AS "decidedAt",
+
+            released_days
+              AS "releasedDays"
+        `,
+      [cancellationId, decidedByUserId, decisionNote, releasedDays],
+    );
+
+    if (approvedCancellationResult.rowCount !== 1) {
+      throw createServiceError(
+        "The cancellation request changed before approval was completed",
+        409,
+      );
+    }
+
+    await client.query(
+      `
+        INSERT INTO
+          leave_cancellation_actions (
+            cancellation_request_id,
+            leave_request_id,
+            action,
+            comment,
+            action_by_user_id
+          )
+        VALUES (
+          $1,
+          $2,
+          'APPROVED',
+          $3,
+          $4
+        )
+      `,
+      [cancellationId, leaveRequestId, decisionNote, decidedByUserId],
+    );
+
+    const nextBalanceStatus =
+      cancellation.balanceStatus === "RESERVED" ? "RELEASED" : "NOT_APPLICABLE";
+
+    const leaveUpdateResult = await client.query(
+      `
+          UPDATE leave_requests
+          SET
+            status = 'CANCELLED',
+
+            cancellation_status =
+              'APPROVED',
+
+            balance_status = $2,
+
+            return_status =
+              'NOT_APPLICABLE',
+
+            updated_at =
+              CURRENT_TIMESTAMP
+
+          WHERE id = $1
+            AND status = 'APPROVED'
+            AND cancellation_status =
+              'PENDING'
+
+          RETURNING
+            id,
+
+            status,
+
+            cancellation_status
+              AS "cancellationStatus",
+
+            balance_status
+              AS "balanceStatus",
+
+            return_status
+              AS "returnStatus"
+        `,
+      [leaveRequestId, nextBalanceStatus],
+    );
+
+    if (leaveUpdateResult.rowCount !== 1) {
+      throw createServiceError(
+        "The leave request changed before cancellation approval was completed",
+        409,
+      );
+    }
+
+    await client.query("COMMIT");
+
+    return {
+      cancellation: approvedCancellationResult.rows[0],
+
+      leaveRequest: leaveUpdateResult.rows[0],
+    };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
 }

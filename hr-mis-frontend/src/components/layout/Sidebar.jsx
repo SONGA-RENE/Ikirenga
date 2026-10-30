@@ -13,101 +13,70 @@ import {
 import { NavLink } from "react-router-dom";
 
 import { useAuth } from "../../auth/AuthContext.jsx";
-
+import { hasPermission } from "../../auth/permissions.js";
 const navigationItems = [
   {
     title: "Dashboard",
     path: "/dashboard",
     icon: LayoutDashboard,
     enabled: true,
+    permission: null,
   },
   {
     title: "Employees",
     path: "/employees",
     icon: Users,
     enabled: true,
+    permission: "VIEW_EMPLOYEES",
   },
   {
     title: "Contracts",
     path: "/contracts",
     icon: FileText,
     enabled: true,
+    permission: "VIEW_CONTRACTS",
   },
   {
     title: "Leave",
     path: "/leave",
     icon: CalendarDays,
-    enabled: false,
+    enabled: true,
+    permission: "VIEW_LEAVE",
   },
   {
     title: "Missions",
     path: "/missions",
     icon: BriefcaseBusiness,
     enabled: false,
+    permission: null,
   },
   {
     title: "Staff Cards",
     path: "/staff-cards",
     icon: CreditCard,
     enabled: false,
+    permission: null,
   },
 ];
 
-function Sidebar({
-  isCollapsed,
-  onToggle,
-}) {
-  const { logout } = useAuth();
+function Sidebar({ isCollapsed, onToggle }) {
+  const { user, logout } = useAuth();
+
+  const visibleNavigationItems = navigationItems.filter((item) => {
+    if (!item.permission) {
+      return true;
+    }
+
+    return hasPermission(user, item.permission);
+  });
 
   return (
     <aside className="sidebar">
       <div>
-        <div className="sidebar-header">
-          <div className="sidebar-brand">
-            <img
-              src="/branding/ikirenga-icon.png"
-              alt=""
-              className="sidebar-brand-icon"
-            />
+        {/* Keep your existing sidebar header here */}
 
-            <div className="sidebar-brand-text">
-              <strong>Ikirenga</strong>
-
-              <span>
-                PSF Human Resources MIS
-              </span>
-            </div>
-          </div>
-
-          <button
-            type="button"
-            className="sidebar-toggle"
-            onClick={onToggle}
-            aria-label={
-              isCollapsed
-                ? "Expand sidebar"
-                : "Collapse sidebar"
-            }
-            aria-expanded={!isCollapsed}
-            title={
-              isCollapsed
-                ? "Expand sidebar"
-                : "Collapse sidebar"
-            }
-          >
-            {isCollapsed ? (
-              <PanelLeftOpen size={19} />
-            ) : (
-              <PanelLeftClose size={19} />
-            )}
-          </button>
-        </div>
-
-        <nav
-          className="sidebar-navigation"
-          aria-label="Main navigation"
-        >
-          {navigationItems.map((item) => {
+        <nav className="sidebar-navigation" aria-label="Main navigation">
+          {visibleNavigationItems.map((item) => {
             const Icon = item.icon;
 
             if (!item.enabled) {
@@ -118,16 +87,12 @@ function Sidebar({
                   className="navigation-link"
                   disabled
                   title={
-                    isCollapsed
-                      ? `${item.title} — coming soon`
-                      : "Coming soon"
+                    isCollapsed ? `${item.title} — coming soon` : "Coming soon"
                   }
                 >
                   <Icon size={20} />
 
-                  <span className="navigation-label">
-                    {item.title}
-                  </span>
+                  <span className="navigation-label">{item.title}</span>
                 </button>
               );
             }
@@ -137,42 +102,23 @@ function Sidebar({
                 key={item.title}
                 to={item.path}
                 className={({ isActive }) =>
-                  `navigation-link ${
-                    isActive ? "active" : ""
-                  }`
+                  `navigation-link ${isActive ? "active" : ""}`
                 }
-                title={
-                  isCollapsed
-                    ? item.title
-                    : undefined
-                }
+                title={isCollapsed ? item.title : undefined}
               >
                 <Icon size={20} />
 
-                <span className="navigation-label">
-                  {item.title}
-                </span>
+                <span className="navigation-label">{item.title}</span>
               </NavLink>
             );
           })}
         </nav>
       </div>
 
-      <button
-        type="button"
-        className="logout-button"
-        onClick={logout}
-        title={
-          isCollapsed
-            ? "Sign out"
-            : undefined
-        }
-      >
+      <button type="button" className="logout-button" onClick={logout}>
         <LogOut size={20} />
 
-        <span className="navigation-label">
-          Sign out
-        </span>
+        <span className="navigation-label">Sign out</span>
       </button>
     </aside>
   );

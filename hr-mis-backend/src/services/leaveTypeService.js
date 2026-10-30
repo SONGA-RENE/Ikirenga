@@ -160,3 +160,40 @@ export async function insertLeaveType(leaveType) {
 
   return result.rows[0];
 }
+export async function updateLeaveTypeActiveStatus(id, isActive) {
+  const result = await pool.query(
+    `
+      UPDATE leave_types
+      SET
+        is_active = $2
+      WHERE id = $1
+      RETURNING
+        id,
+        code,
+        name,
+        annual_entitlement
+          AS "annualEntitlement",
+        is_paid
+          AS "isPaid",
+        requires_attachment
+          AS "requiresAttachment",
+        entitlement_mode
+          AS "entitlementMode",
+        duration_value
+          AS "durationValue",
+        duration_unit
+          AS "durationUnit",
+        eligible_gender
+          AS "eligibleGender",
+        carry_forward_years
+          AS "carryForwardYears",
+        is_active
+          AS "isActive",
+        created_at
+          AS "createdAt"
+    `,
+    [id, isActive],
+  );
+
+  return result.rows[0];
+}

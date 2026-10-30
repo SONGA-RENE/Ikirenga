@@ -2,6 +2,7 @@ import {
   findAllLeaveTypes,
   findLeaveTypeById,
   insertLeaveType,
+  updateLeaveTypeActiveStatus,
 } from "../services/leaveTypeService.js";
 
 export async function getAllLeaveTypes(request, response, next) {
@@ -216,6 +217,57 @@ export async function createLeaveType(request, response, next) {
       });
     }
 
+    next(error);
+  }
+}
+export async function changeLeaveTypeStatus(request, response, next) {
+  try {
+    const id = Number(request.params.id);
+
+    const { isActive } = request.body;
+
+    if (!Number.isInteger(id) || id <= 0) {
+      return response.status(400).json({
+        success: false,
+        message: "Leave type ID must be a positive integer",
+      });
+    }
+
+    if (typeof isActive !== "boolean") {
+      return response.status(400).json({
+        success: false,
+        message: "isActive must be a boolean value",
+      });
+    }
+
+    const currentLeaveType = await findLeaveTypeById(id);
+
+    if (!currentLeaveType) {
+      return response.status(404).json({
+        success: false,
+        message: "Leave type not found",
+      });
+    }
+
+    if (currentLeaveType.isActive === isActive) {
+      return response.status(409).json({
+        success: false,
+        message: isActive
+          ? "This leave type is already active"
+          : "This leave type is already inactive",
+      });
+    }
+
+    const leaveType = await updateLeaveTypeActiveStatus(id, isActive);
+
+    return response.status(200).json({
+      success: true,
+      message: isActive
+        ? "Leave type reactivated successfully"
+        : "Leave type deactivated successfully",
+      data: leaveType,
+    });
+  } catch (error) {
     next(error);
   }
 }

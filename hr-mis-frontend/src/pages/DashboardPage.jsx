@@ -11,6 +11,7 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext.jsx";
 
 import ContractExpiryPanel from "./contracts/ContractExpiryPanel.jsx";
+import { hasPermission } from "../auth/permissions.js";
 
 const modules = [
   {
@@ -19,6 +20,7 @@ const modules = [
     icon: Users,
     path: "/employees",
     enabled: true,
+    permission: "VIEW_EMPLOYEES",
   },
   {
     title: "Contracts",
@@ -26,29 +28,24 @@ const modules = [
     icon: FileText,
     path: "/contracts",
     enabled: true,
+    permission: "VIEW_CONTRACTS",
   },
   {
     title: "Leave",
     description: "Manage leave requests, balances and approvals.",
     icon: CalendarDays,
-    enabled: false,
-  },
-  {
-    title: "Missions",
-    description: "Manage missions, approvals, reports and reconciliation.",
-    icon: BriefcaseBusiness,
-    enabled: false,
-  },
-  {
-    title: "Staff Cards",
-    description: "Issue, verify, revoke and replace staff cards.",
-    icon: CreditCard,
-    enabled: false,
+    path: "/leave",
+    enabled: true,
+    permission: "VIEW_LEAVE",
   },
 ];
 
 function DashboardPage() {
   const { user } = useAuth();
+
+  const visibleModules = modules.filter(
+    (module) => !module.permission || hasPermission(user, module.permission),
+  );
 
   const userInitials = user.fullName
     .split(" ")
@@ -57,7 +54,6 @@ function DashboardPage() {
     .slice(0, 2)
     .join("")
     .toUpperCase();
-
   return (
     <>
       <header className="dashboard-header">
@@ -80,7 +76,7 @@ function DashboardPage() {
       </header>
 
       <section className="module-grid" aria-label="HR modules">
-        {modules.map((module) => {
+        {visibleModules.map((module) => {
           const Icon = module.icon;
 
           return (
@@ -104,6 +100,7 @@ function DashboardPage() {
           );
         })}
       </section>
+
       {["ADMIN", "HR"].includes(user.role) && <ContractExpiryPanel />}
     </>
   );

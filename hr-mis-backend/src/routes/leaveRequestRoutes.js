@@ -16,11 +16,14 @@ import {
   reportEmployeeLeaveReturn,
   requestLeaveCancellation,
   verifyEmployeeLeaveReturn,
+  getEmployeesCurrentlyOnLeave,
 } from "../controllers/leaveRequestController.js";
 
 import { authenticate } from "../middleware/authMiddleware.js";
 
 import { authorizeRoles } from "../middleware/roleMiddleware.js";
+
+import { uploadLeaveAttachment } from "../middleware/leaveAttachmentUpload.js";
 
 const router = express.Router();
 
@@ -28,7 +31,12 @@ const router = express.Router();
  * Collection routes
  */
 
-router.post("/", authenticate, createLeaveRequest);
+router.post(
+  "/",
+  authenticate,
+  uploadLeaveAttachment.single("attachment"),
+  createLeaveRequest,
+);
 
 router.get(
   "/",
@@ -58,6 +66,12 @@ router.get(
   getPendingLeaveReturns,
 );
 
+router.get(
+  "/currently-on-leave",
+  authenticate,
+  authorizeRoles("ADMIN", "HR"),
+  getEmployeesCurrentlyOnLeave,
+);
 /*
  * Approval workflow
  */
@@ -65,6 +79,7 @@ router.get(
 router.patch(
   "/:requestId/requirements/:requirementId/decision",
   authenticate,
+  authorizeRoles("HR", "DIRECTOR", "DEPUTY_CEO", "CEO", "CHAIRMAN"),
   decideLeaveRequirement,
 );
 
@@ -81,6 +96,7 @@ router.post(
 router.patch(
   "/:requestId/cancellation-requests/:cancellationId/decision",
   authenticate,
+  authorizeRoles("HR", "CEO", "CHAIRMAN"),
   decideLeaveCancellation,
 );
 

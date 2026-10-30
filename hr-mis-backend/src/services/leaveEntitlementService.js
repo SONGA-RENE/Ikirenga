@@ -40,7 +40,14 @@ async function findNextWorkingDate(client, date) {
   return result.rows[0]?.nextWorkingDate || null;
 }
 export async function grantLeaveEntitlement(
-  { employeeId, leaveTypeId, leaveYear, entitledDays, grantNote },
+  {
+    employeeId,
+    leaveTypeId,
+    leaveYear,
+    entitledDays,
+    availableFrom,
+    grantNote,
+  },
   grantedByUserId,
 ) {
   const client = await pool.connect();
@@ -170,52 +177,67 @@ export async function grantLeaveEntitlement(
 
     const entitlementResult = await client.query(
       `
-          INSERT INTO
-            employee_leave_entitlements (
-              employee_id,
-              leave_type_id,
-              leave_year,
-              entitled_days,
-              expires_on,
-              source,
-              granted_by_user_id,
-              grant_note
-            )
-          VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            'MANUAL',
-            $6,
-            $7
-          )
-          RETURNING
-            id,
-            employee_id
-              AS "employeeId",
-            leave_type_id
-              AS "leaveTypeId",
-            leave_year
-              AS "leaveYear",
-            entitled_days
-              AS "entitledDays",
-            expires_on
-              AS "expiresOn",
-            source,
-            granted_by_user_id
-              AS "grantedByUserId",
-            grant_note
-              AS "grantNote",
-            created_at
-              AS "createdAt"
-        `,
+      INSERT INTO
+        employee_leave_entitlements (
+          employee_id,
+          leave_type_id,
+          leave_year,
+          entitled_days,
+          available_from,
+          expires_on,
+          source,
+          granted_by_user_id,
+          grant_note
+        )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        'MANUAL',
+        $7,
+        $8
+      )
+      RETURNING
+        id,
+
+        employee_id
+          AS "employeeId",
+
+        leave_type_id
+          AS "leaveTypeId",
+
+        leave_year
+          AS "leaveYear",
+
+        entitled_days
+          AS "entitledDays",
+
+        available_from
+          AS "availableFrom",
+
+        expires_on
+          AS "expiresOn",
+
+        source,
+
+        granted_by_user_id
+          AS "grantedByUserId",
+
+        grant_note
+          AS "grantNote",
+
+        created_at
+          AS "createdAt"
+    `,
       [
         employeeId,
         leaveTypeId,
         leaveYear,
         entitledDays,
+        availableFrom,
         expiresOn,
         grantedByUserId,
         grantNote,
@@ -777,7 +799,7 @@ export async function generateAnnualEntitlements(asOfDate, generatedByUserId) {
       ORDER BY start_date DESC
       LIMIT 1
     `,
-          [employee.id, resolvedAsOfDate],
+          [employee.id, anniversaryDate],
         );
 
         if (!contractResult.rows[0]) {
@@ -794,60 +816,75 @@ export async function generateAnnualEntitlements(asOfDate, generatedByUserId) {
 
         const entitlementResult = await client.query(
           `
-              INSERT INTO
-                employee_leave_entitlements (
-                  employee_id,
-                  leave_type_id,
-                  leave_year,
-                  entitled_days,
-                  expires_on,
-                  source,
-                  granted_by_user_id,
-                  grant_note
-                )
-              VALUES (
-                $1,
-                $2,
-                $3,
-                $4,
-                $5,
-                'ANNUAL_GENERATION',
-                $6,
-                $7
-              )
+      INSERT INTO
+        employee_leave_entitlements (
+          employee_id,
+          leave_type_id,
+          leave_year,
+          entitled_days,
+          available_from,
+          expires_on,
+          source,
+          granted_by_user_id,
+          grant_note
+        )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        'ANNUAL_GENERATION',
+        $7,
+        $8
+      )
 
-              ON CONFLICT (
-                employee_id,
-                leave_type_id,
-                leave_year
-              )
-              DO NOTHING
+      ON CONFLICT (
+        employee_id,
+        leave_type_id,
+        leave_year
+      )
+      DO NOTHING
 
-              RETURNING
-                id,
-                employee_id
-                  AS "employeeId",
-                leave_type_id
-                  AS "leaveTypeId",
-                leave_year
-                  AS "leaveYear",
-                entitled_days
-                  AS "entitledDays",
-                expires_on
-                  AS "expiresOn",
-                source,
-                granted_by_user_id
-                  AS "grantedByUserId",
-                grant_note
-                  AS "grantNote",
-                created_at
-                  AS "createdAt"
-            `,
+      RETURNING
+        id,
+
+        employee_id
+          AS "employeeId",
+
+        leave_type_id
+          AS "leaveTypeId",
+
+        leave_year
+          AS "leaveYear",
+
+        entitled_days
+          AS "entitledDays",
+
+        available_from
+          AS "availableFrom",
+
+        expires_on
+          AS "expiresOn",
+
+        source,
+
+        granted_by_user_id
+          AS "grantedByUserId",
+
+        grant_note
+          AS "grantNote",
+
+        created_at
+          AS "createdAt"
+    `,
           [
             employee.id,
             policy.id,
             entitlementYear,
             policy.annualEntitlement,
+            anniversaryDate,
             expiresOn,
             generatedByUserId,
             `Annual entitlement generated for service anniversary ${anniversaryDate}`,

@@ -16,7 +16,10 @@ import {
   correctLeaveReturn,
   rejectLeaveReturn,
   findPendingLeaveReturns,
+  findEmployeesCurrentlyOnLeave,
 } from "../services/leaveRequestService.js";
+
+import { deleteUploadedLeaveAttachment } from "../middleware/leaveAttachmentUpload.js";
 
 function isValidISODate(value) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
@@ -80,89 +83,156 @@ export async function getLeaveRequestById(request, response, next) {
 }
 
 export async function createLeaveRequest(request, response, next) {
+  let attachmentPersisted = false;
+
+  function rejectRequest(statusCode, message) {
+    deleteUploadedLeaveAttachment(request.file);
+
+    return response.status(statusCode).json({
+      success: false,
+      message,
+    });
+  }
+
   try {
-    const {
-      employeeId,
-      leaveTypeId,
-      startDate,
-      endDate = null,
-      reason,
-    } = request.body;
+    const { leaveTypeId, startDate, endDate = null, reason } = request.body;
 
-    const canSubmitForAnotherEmployee = ["ADMIN", "HR"].includes(
-      request.user.role,
-    );
-
-    const resolvedEmployeeId = canSubmitForAnotherEmployee
-      ? Number(employeeId)
-      : Number(request.user.employeeId);
+    /*
+     * This is strictly a self-service
+     * endpoint. Employee identity must come
+     * from the authenticated account.
+     */
+    const authenticatedEmployeeId = Number(request.user.employeeId);
 
     const resolvedLeaveTypeId = Number(leaveTypeId);
 
     if (
-      !Number.isInteger(resolvedEmployeeId) ||
-      resolvedEmployeeId <= 0 ||
-      !Number.isInteger(resolvedLeaveTypeId) ||
-      resolvedLeaveTypeId <= 0
+      !Number.isInteger(authenticatedEmployeeId) ||
+      authenticatedEmployeeId <= 0
     ) {
-      return response.status(400).json({
-        success: false,
-        message: "Employee ID and leave type ID must be positive integers",
-      });
+      return rejectRequest(
+        403,
+        "Your user account is not linked to an employee record",
+      );
+    }
+
+    /*
+     * Older clients may still submit their
+     * own employeeId. Reject it only when it
+     * attempts to identify another employee.
+     */
+    if (
+      request.body.employeeId !== undefined &&
+      Number(request.body.employeeId) !== authenticatedEmployeeId
+    ) {
+      return rejectRequest(
+        403,
+        "You cannot submit a leave request for another employee",
+      );
+    }
+
+    if (!Number.isInteger(resolvedLeaveTypeId) || resolvedLeaveTypeId <= 0) {
+      return rejectRequest(400, "Leave type ID must be a positive integer");
     }
 
     if (!isValidISODate(startDate)) {
-      return response.status(400).json({
-        success: false,
-        message: "Start date must use YYYY-MM-DD format",
-      });
+      return rejectRequest(400, "Start date must use YYYY-MM-DD format");
     }
 
     if (endDate && !isValidISODate(endDate)) {
-      return response.status(400).json({
-        success: false,
-        message: "End date must use YYYY-MM-DD format",
-      });
+      return rejectRequest(400, "End date must use YYYY-MM-DD format");
     }
 
     if (endDate && endDate < startDate) {
-      return response.status(400).json({
-        success: false,
-        message: "Leave end date cannot be before the start date",
-      });
+      return rejectRequest(
+        400,
+        "Leave end date cannot be before the start date",
+      );
     }
 
     const normalizedReason = reason?.trim();
 
     if (!normalizedReason || normalizedReason.length < 5) {
-      return response.status(400).json({
-        success: false,
-        message: "Leave reason must contain at least 5 characters",
-      });
+      return rejectRequest(
+        400,
+        "Leave reason must contain at least 5 characters",
+      );
     }
+
+    const attachment = request.file
+      ? {
+          originalFilename: request.file.originalname,
+
+          storedFilename: request.file.filename,
+
+          mimeType: request.file.mimetype,
+
+          fileSize: request.file.size,
+        }
+      : null;
 
     const result = await insertLeaveRequest(
       {
-        employeeId: resolvedEmployeeId,
+        employeeId: authenticatedEmployeeId,
+
         leaveTypeId: resolvedLeaveTypeId,
+
         startDate,
+
         endDate,
+
         reason: normalizedReason,
+
+        attachment,
       },
       request.user.id,
     );
 
+    /*
+     * The service must return attachment
+     * metadata after inserting it in the
+     * database. If it does not, do not leave
+     * the uploaded file orphaned.
+     */
+    if (request.file && !result.attachment) {
+      const persistenceError = new Error(
+        "The leave request attachment could not be recorded",
+      );
+
+      persistenceError.statusCode = 500;
+
+      throw persistenceError;
+    }
+
+    attachmentPersisted = Boolean(result.attachment);
+
     return response.status(201).json({
       success: true,
+
       message: "Leave request submitted successfully",
+
       data: result.leaveRequest,
+
+      attachment: result.attachment || null,
+
       workflow: {
         approvalRoute: result.leaveRequest.approvalRoute,
+
         currentStage: result.leaveRequest.currentStage,
+
         requirements: result.requirements,
       },
     });
   } catch (error) {
+    /*
+     * Delete the physical file only when it
+     * has not been successfully recorded by
+     * the service transaction.
+     */
+    if (!attachmentPersisted) {
+      deleteUploadedLeaveAttachment(request.file);
+    }
+
     if (error.statusCode) {
       return response.status(error.statusCode).json({
         success: false,
@@ -173,6 +243,7 @@ export async function createLeaveRequest(request, response, next) {
     if (error.code === "23P01") {
       return response.status(409).json({
         success: false,
+
         message:
           "The employee already has an overlapping pending or approved leave request",
       });
@@ -402,9 +473,13 @@ export async function requestLeaveCancellation(request, response, next) {
 
     const result = await createLeaveCancellationRequest({
       leaveRequestId,
+
       cancellationReason,
+
       requestedByUserId: request.user.id,
+
       requesterEmployeeId: request.user.employeeId,
+
       requesterRole: request.user.role,
     });
 
@@ -825,6 +900,30 @@ export async function getPendingLeaveReturns(request, response, next) {
       success: true,
       count: returns.length,
       data: returns,
+    });
+  } catch (error) {
+    next(error);
+  }
+}
+export async function getEmployeesCurrentlyOnLeave(request, response, next) {
+  try {
+    const employees = await findEmployeesCurrentlyOnLeave();
+
+    const returningSoonCount = employees.filter(
+      (employee) => employee.isReturningSoon,
+    ).length;
+
+    return response.status(200).json({
+      success: true,
+
+      count: employees.length,
+
+      summary: {
+        currentlyOnLeave: employees.length,
+        returningSoon: returningSoonCount,
+      },
+
+      data: employees,
     });
   } catch (error) {
     next(error);
